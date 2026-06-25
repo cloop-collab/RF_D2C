@@ -310,14 +310,22 @@ def _month_windows(since, until):
     return windows
 
 
-def run_backfill(client, table_id, months):
-    until = date.today()
-    y, m = until.year, until.month - months
+def _minus_months(d, months):
+    """d 에서 months 개월 이전 날짜(같은 일자, 말일 보정)."""
+    from calendar import monthrange
+    y, m = d.year, d.month - months
     while m <= 0:
         m += 12
         y -= 1
-    since = date(y, m, 1)
-    log.info("백필 시작: %s ~ %s (%d개월, 달 단위 분할)", since, until, months)
+    return date(y, m, min(d.day, monthrange(y, m)[1]))
+
+
+def run_backfill(client, table_id, months):
+    until = date.today()
+    # 메타는 시작일이 현재로부터 37개월을 넘으면 거부(#3018).
+    # 정확히 N개월 전에서 5일 버퍼를 둬 안전하게 시작.
+    since = _minus_months(until, months) + timedelta(days=5)
+    log.info("백필 시작: %s ~ %s (요청 %d개월, 메타 37개월 제한 반영)", since, until, months)
     grand = 0
     for ws, we in _month_windows(since, until):
         rows = _collect_rows(ws.isoformat(), we.isoformat())
