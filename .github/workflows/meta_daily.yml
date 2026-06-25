@@ -1,0 +1,44 @@
+name: Meta to BigQuery Daily
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 매일 06:00 KST (= 21:00 UTC)
+  workflow_dispatch:
+    inputs:
+      backfill_months:
+        description: "과거 N개월 1회 백필 (예: 37). 비워두면 일상 모드(최근 7일)."
+        required: false
+        default: ""
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 라이브러리 설치
+        run: pip install -r requirements.txt
+      - name: 서비스계정 키 파일 만들기 (시크릿에서)
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재 실행
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          AD_ACCOUNT_IDS: ${{ secrets.AD_ACCOUNT_IDS }}
+          BQ_PROJECT: rf-ads-db-500505
+          BQ_DATASET: meta_ads
+          BQ_TABLE: rf_ads_db
+          LOOKBACK_DAYS: "7"
+          BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months }}
+        run: python meta_to_bigquery.py
+      - name: 키 파일 삭제
+        if: always()
+        run: rm -f sa_key.json
