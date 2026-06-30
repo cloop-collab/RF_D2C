@@ -38,6 +38,8 @@ LEVEL = os.environ.get("META_LEVEL", "ad")
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 # 백필(1회성): 과거 N개월을 한 번에 채울 때만 설정 (예: 37). 0/빈값이면 일상(daily) 모드.
 BACKFILL_MONTHS = int(os.environ.get("BACKFILL_MONTHS") or "0")
+# 요청 사이 대기(초): 메타 앱 요청 한도(rate limit) 회피용
+SLEEP_BETWEEN = int(os.environ.get("SLEEP_BETWEEN") or "20")
 
 BQ_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_DATASET = os.environ.get("BQ_DATASET", "meta_ads")
@@ -95,28 +97,52 @@ log = logging.getLogger("meta_to_bigquery")
 # ──────────────────────────────────────────────────────────────────────────
 # 1) 메타에서 데이터 가져오기 (비동기 리포트)
 # ──────────────────────────────────────────────────────────────────────────
+def _is_rate_limit(err):
+    """메타 요청 한도 오류인지 판별 (POST/async 양쪽 키 모두 대응)."""
+    if not err:
+        return False
+    code = err.get("code", err.get("error_code"))
+    sub = err.get("error_subcode")
+    msg = (err.get("error_message") or err.get("message") or "").lower()
+    if code in (4, 17, 32, 613):
+        return True
+    if sub in (1504022, 2446079, 1487742):
+        return True
+    return "request limit" in msg or "limit reached" in msg or "too many" in msg
+
+
 def fetch_insights(account_id, since, until):
     all_fields = SCALAR_FIELDS + NESTED_FIELDS
-    run_id = None
-    for _ in range(len(all_fields) + 1):
+    backoff = 60
+    for attempt in range(8):
         run_id, err = _start_async_report(account_id, all_fields, since, until)
-        if run_id:
-            break
-        msg = (err or {}).get("message", "")
-        if "nonexisting field" in msg or "(#100)" in msg:
-            bad = _extract_bad_field(msg)
-            if bad and bad in all_fields:
-                log.warning("필드 '%s' 거부됨 → 제외하고 재시도", bad)
-                all_fields.remove(bad)
+        if err:
+            msg = (err or {}).get("message", "")
+            if "nonexisting field" in msg or "(#100)" in msg:
+                bad = _extract_bad_field(msg)
+                if bad and bad in all_fields:
+                    log.warning("필드 '%s' 거부됨 → 제외하고 재시도", bad)
+                    all_fields.remove(bad)
+                    continue
+            if _is_rate_limit(err):
+                log.warning("요청 한도(생성) → %d초 대기 후 재시도", backoff)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 900)
                 continue
-        raise RuntimeError(f"메타 API 오류(리포트 생성): {err}")
-    if not run_id:
-        raise RuntimeError("비동기 리포트 생성 실패")
+            raise RuntimeError(f"메타 API 오류(리포트 생성): {err}")
 
-    _wait_async_report(run_id)
-    rows = _fetch_async_results(run_id)
-    log.info("계정 %s: %d행 수집", account_id, len(rows))
-    return rows
+        status, info = _wait_async_report(run_id)
+        if status == "Job Completed":
+            rows = _fetch_async_results(run_id)
+            log.info("계정 %s: %d행 수집", account_id, len(rows))
+            return rows
+        if _is_rate_limit(info):
+            log.warning("리포트 실패(요청 한도) → %d초 대기 후 재시도", backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 900)
+            continue
+        raise RuntimeError(f"비동기 작업 실패: {info}")
+    raise RuntimeError("요청 한도가 지속되어 재시도 한도 초과")
 
 
 def _start_async_report(account_id, fields, since, until):
@@ -135,7 +161,7 @@ def _start_async_report(account_id, fields, since, until):
     return payload.get("report_run_id"), None
 
 
-def _wait_async_report(run_id, max_wait=1800, interval=5):
+def _wait_async_report(run_id, max_wait=1800, interval=10):
     url = f"https://graph.facebook.com/{API_VERSION}/{run_id}"
     waited = 0
     while waited <= max_wait:
@@ -144,13 +170,13 @@ def _wait_async_report(run_id, max_wait=1800, interval=5):
         status = s.get("async_status")
         pct = s.get("async_percent_completion")
         if status == "Job Completed":
-            return
+            return "Job Completed", s
         if status in ("Job Failed", "Job Skipped"):
-            raise RuntimeError(f"비동기 작업 실패({status}): {s}")
+            return status, s
         log.info("리포트 진행중... %s%% (%s)", pct, status)
         time.sleep(interval)
         waited += interval
-    raise RuntimeError("비동기 작업 시간 초과")
+    return "Timeout", {"async_status": "Timeout"}
 
 
 def _fetch_async_results(run_id):
@@ -332,6 +358,7 @@ def run_backfill(client, table_id, months):
         load_by_partition(client, table_id, rows)
         grand += len(rows)
         log.info(">> 구간 %s~%s 적재: %d행 (누적 %d)", ws, we, len(rows), grand)
+        time.sleep(SLEEP_BETWEEN)   # 요청 한도 회피
     log.info("백필 완료: 총 %d행", grand)
 
 
