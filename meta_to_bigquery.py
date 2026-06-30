@@ -41,7 +41,7 @@ BACKFILL_MONTHS = int(os.environ.get("BACKFILL_MONTHS") or "0")
 
 BQ_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_DATASET = os.environ.get("BQ_DATASET", "meta_ads")
-BQ_TABLE = os.environ.get("BQ_TABLE", "rf_ads_db")
+BQ_TABLE = os.environ.get("BQ_TABLE", "rf_meta_ads")
 BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 
 # 서비스계정 키 경로 (환경변수로 안 넣었으면 이 파일 옆의 키를 자동 사용)
