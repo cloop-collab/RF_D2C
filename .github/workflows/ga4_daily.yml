@@ -1,4 +1,4 @@
-name: GA4 Daily (매일 전일자 + 당일)
+name: GA4 Daily (매일 전일자)
 
 on:
   schedule:
@@ -19,9 +19,5 @@ jobs:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       - name: Update rf_ga4 (어제)
         run: python ga4/ga4_to_bigquery.py --mode daily
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
-      - name: Refresh rf_ga4_d0 (오늘)
-        run: python ga4/ga4_to_bigquery.py --mode d0
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
