@@ -3,12 +3,17 @@ name: Naver SA to BigQuery Daily
 on:
   schedule:
     - cron: "0 21 * * *"   # 매일 06:00 KST (= 21:00 UTC)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(최근 7일)."
+        required: false
+        default: ""
 
 jobs:
   load:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
@@ -23,7 +28,7 @@ jobs:
           cat > sa_key.json <<'KEY'
           ${{ secrets.GCP_SA_KEY }}
           KEY
-      - name: 적재 실행 (최근 7일)
+      - name: 적재 실행
         env:
           GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
           NAVER_CLOOP_LICENSE: ${{ secrets.NAVER_CLOOP_LICENSE }}
@@ -36,6 +41,7 @@ jobs:
           BQ_DATASET: naver_ads
           BQ_TABLE: rf_naver_sa_ads
           LOOKBACK_DAYS: "7"
+          BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
         run: python naver/naver_to_bigquery.py
       - name: 키 파일 삭제
         if: always()

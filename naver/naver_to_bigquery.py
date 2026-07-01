@@ -54,6 +54,7 @@ ACCOUNTS = [
 ]
 
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
+BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")  # >0 이면 최근 N일 백필
 SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN") or "0.3")
 ID_CHUNK = int(os.environ.get("ID_CHUNK", "100"))
 
@@ -271,7 +272,10 @@ def main():
     table_id = ensure_table(client)
 
     until = date.today()
-    since = until - timedelta(days=LOOKBACK_DAYS - 1)
+    span = BACKFILL_DAYS if BACKFILL_DAYS > 0 else LOOKBACK_DAYS
+    if BACKFILL_DAYS > 0:
+        log.info("백필 모드: 최근 %d일 채우기", BACKFILL_DAYS)
+    since = until - timedelta(days=span - 1)
     rows = collect_rows(since.isoformat(), until.isoformat())
     load_by_partition(client, table_id, rows)
     log.info("done: %d rows (%s ~ %s) -> %s",
