@@ -29,6 +29,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import requests
 from google.cloud import bigquery
+from google.api_core.exceptions import NotFound
 
 BASE_URL = "https://api.searchad.naver.com"
 
@@ -220,13 +221,24 @@ def ensure_table(client):
     ds.location = BQ_LOCATION
     client.create_dataset(ds, exists_ok=True)
     table_id = f"{BQ_PROJECT}.{BQ_DATASET}.{BQ_TABLE}"
-    table = bigquery.Table(table_id, schema=build_schema())
-    table.time_partitioning = bigquery.TimePartitioning(
-        type_=bigquery.TimePartitioningType.DAY, field="report_date")
-    table.clustering_fields = (["keyword_id", "campaign_id"] if LEVEL == "keyword"
-                               else ["campaign_id", "lp_type"])
-    client.create_table(table, exists_ok=True)
-    log.info("table ready: %s (level=%s)", table_id, LEVEL)
+    desired = build_schema()
+    try:
+        table = client.get_table(table_id)
+        existing = {f.name for f in table.schema}
+        missing = [f for f in desired if f.name not in existing]
+        if missing:
+            table.schema = list(table.schema) + missing
+            client.update_table(table, ["schema"])
+            log.info("스키마 컬럼 추가: %s", [f.name for f in missing])
+        log.info("table ready(existing): %s (level=%s)", table_id, LEVEL)
+    except NotFound:
+        table = bigquery.Table(table_id, schema=desired)
+        table.time_partitioning = bigquery.TimePartitioning(
+            type_=bigquery.TimePartitioningType.DAY, field="report_date")
+        table.clustering_fields = (["keyword_id", "campaign_id"] if LEVEL == "keyword"
+                                   else ["campaign_id", "lp_type"])
+        client.create_table(table)
+        log.info("table created: %s (level=%s)", table_id, LEVEL)
     return table_id
 
 
