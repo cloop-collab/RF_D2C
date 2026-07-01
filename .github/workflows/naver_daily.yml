@@ -37,6 +37,7 @@ jobs:
           NAVER_SPRINT_LICENSE: ${{ secrets.NAVER_SPRINT_LICENSE }}
           NAVER_SPRINT_SECRET: ${{ secrets.NAVER_SPRINT_SECRET }}
           NAVER_SPRINT_CUSTOMER_ID: ${{ secrets.NAVER_SPRINT_CUSTOMER_ID }}
+          NAVER_LEVEL: campaign
           BQ_PROJECT: rf-ads-db-500505
           BQ_DATASET: naver_ads
           BQ_TABLE: rf_naver_sa_ads
