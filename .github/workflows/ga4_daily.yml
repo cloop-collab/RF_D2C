@@ -1,0 +1,27 @@
+name: GA4 Daily (매일 전일자 + 당일)
+
+on:
+  schedule:
+    - cron: '0 20 * * *'   # 매일 05:00 KST
+  workflow_dispatch:
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r ga4/requirements.txt
+      - run: printf '%s' "$GCP_SA_KEY" > /tmp/sa.json
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      - name: Update rf_ga4 (어제)
+        run: python ga4/ga4_to_bigquery.py --mode daily
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+      - name: Refresh rf_ga4_d0 (오늘)
+        run: python ga4/ga4_to_bigquery.py --mode d0
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
