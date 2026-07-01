@@ -26,9 +26,9 @@ jobs:
       - name: 적재 실행 (최근 7일)
         env:
           GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
-          NAVER_KLUP_LICENSE: ${{ secrets.NAVER_KLUP_LICENSE }}
-          NAVER_KLUP_SECRET: ${{ secrets.NAVER_KLUP_SECRET }}
-          NAVER_KLUP_CUSTOMER_ID: ${{ secrets.NAVER_KLUP_CUSTOMER_ID }}
+          NAVER_CLOOP_LICENSE: ${{ secrets.NAVER_CLOOP_LICENSE }}
+          NAVER_CLOOP_SECRET: ${{ secrets.NAVER_CLOOP_SECRET }}
+          NAVER_CLOOP_CUSTOMER_ID: ${{ secrets.NAVER_CLOOP_CUSTOMER_ID }}
           NAVER_SPRINT_LICENSE: ${{ secrets.NAVER_SPRINT_LICENSE }}
           NAVER_SPRINT_SECRET: ${{ secrets.NAVER_SPRINT_SECRET }}
           NAVER_SPRINT_CUSTOMER_ID: ${{ secrets.NAVER_SPRINT_CUSTOMER_ID }}

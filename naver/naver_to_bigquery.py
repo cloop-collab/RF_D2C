@@ -39,9 +39,9 @@ BASE_URL = "https://api.searchad.naver.com"
 ACCOUNTS = [
     {
         "name": "CLOOP",
-        "license": os.environ.get("NAVER_KLUP_LICENSE", ""),
-        "secret": os.environ.get("NAVER_KLUP_SECRET", ""),
-        "customer_id": os.environ.get("NAVER_KLUP_CUSTOMER_ID", "1762559"),
+        "license": os.environ.get("NAVER_CLOOP_LICENSE", ""),
+        "secret": os.environ.get("NAVER_CLOOP_SECRET", ""),
+        "customer_id": os.environ.get("NAVER_CLOOP_CUSTOMER_ID", "1762559"),
         "media": "SA",
     },
     {
