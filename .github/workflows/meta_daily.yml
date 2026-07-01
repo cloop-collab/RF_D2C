@@ -2,7 +2,7 @@ name: Meta to BigQuery Daily
 
 on:
   schedule:
-    - cron: "0 21 * * *"   # 매일 06:00 KST (= 21:00 UTC)
+    - cron: "0 22 * * *"   # 매일 07:00 KST (= 22:00 UTC)
   workflow_dispatch:
     inputs:
       backfill_months:
