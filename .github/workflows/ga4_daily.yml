@@ -1,4 +1,4 @@
-name: GA4 Daily (매일 전일자)
+name: GA4 to BigQuery Daily
 
 on:
   schedule:
