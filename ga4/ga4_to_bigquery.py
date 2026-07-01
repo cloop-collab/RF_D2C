@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """
 GA4 -> BigQuery 적재 (cloop-collab/RF_D2C · ga4 폴더)
-네이버(naver/naver_to_bigquery.py)와 동일한 규칙으로 통일.
+네이버(naver/naver_to_bigquery.py)와 동일한 방식: 환경변수 기반 + daily에 백필 통합.
 
-프로젝트 rf-ads-db-500505 · 데이터셋 rf_ga4 (location: asia-northeast3)
-  - rf_ga4      : 일별·확정. 최근 1년 유지, 매일 '전일자' 갱신 (cloop + sprint 합침)
-  - rf_ga4_d0   : 당일. 시간당 갱신 (cloop + sprint 합침)
-두 몰은 brand 컬럼(cloop / sprint)으로 구분.
+프로젝트 rf-ads-db-500505 · 데이터셋 rf_ga4 (asia-northeast3)
+  - rf_ga4      : 일별·확정 (cloop + sprint 합침)
+  - rf_ga4_d0   : 당일 (cloop + sprint 합침)
 
-실행:
-  python ga4/ga4_to_bigquery.py --mode backfill   # 최초 1회: 지난 365일 rf_ga4 채우기
-  python ga4/ga4_to_bigquery.py --mode daily      # 매일: 어제 데이터로 rf_ga4 갱신 + 1년 초과분 정리
-  python ga4/ga4_to_bigquery.py --mode d0         # 시간당: 오늘 데이터로 rf_ga4_d0 갱신
+모드:
+  python ga4/ga4_to_bigquery.py --mode daily
+     · 평소: 최근 LOOKBACK_DAYS(기본 7)일 재적재 (지연 반영분 보정) + KEEP_DAYS 초과분 정리
+     · BACKFILL_DAYS>0 로 실행 시: 과거 N일 1회 백필 (rf_ga4 전체 교체)
+  python ga4/ga4_to_bigquery.py --mode d0
+     · 당일 데이터로 rf_ga4_d0 교체 (시간당)
 
-인증: 환경변수 GOOGLE_APPLICATION_CREDENTIALS = 서비스계정 JSON 키 경로
+환경변수(워크플로우에서 주입, 기본값 있음):
+  BQ_PROJECT / BQ_DATASET / BQ_TABLE / BQ_TABLE_D0 / BQ_LOCATION
+  LOOKBACK_DAYS(기본 7) / BACKFILL_DAYS(기본 0) / KEEP_DAYS(기본 365)
+  GOOGLE_APPLICATION_CREDENTIALS = 서비스계정 JSON 경로
 """
 
 import argparse
+import os
 import datetime as dt
 from zoneinfo import ZoneInfo
 
@@ -29,13 +34,15 @@ from google.analytics.data_v1beta.types import (
 )
 from google.cloud import bigquery
 
-# ========== 설정 (여기만 고치면 됩니다) ==========
-GCP_PROJECT = "rf-ads-db-500505"
-BQ_DATASET = "rf_ga4"
-BQ_LOCATION = "asia-northeast3"   # 서울
-TABLE_DAILY = "rf_ga4"       # 일별·확정
-TABLE_D0 = "rf_ga4_d0"       # 시간당·당일
-BACKFILL_DAYS = 365
+# ========== 설정 (환경변수로 덮어쓰기 가능) ==========
+GCP_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
+BQ_DATASET = os.environ.get("BQ_DATASET", "rf_ga4")
+BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
+TABLE_DAILY = os.environ.get("BQ_TABLE", "rf_ga4")        # 일별·확정
+TABLE_D0 = os.environ.get("BQ_TABLE_D0", "rf_ga4_d0")     # 시간당·당일
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS") or "7")
+BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")
+KEEP_DAYS = int(os.environ.get("KEEP_DAYS") or "365")
 KST = ZoneInfo("Asia/Seoul")
 
 # GA4 속성ID -> brand(몰) 이름
@@ -80,7 +87,7 @@ METRIC_COLS = {
     "firstTimePurchasers": "first_time_purchasers",
 }
 FLOAT_METRICS = {"purchase_revenue"}
-# ===================================================
+# =====================================================
 
 
 def bq_schema():
@@ -165,41 +172,46 @@ def ensure_table(bq, table_id):
 
 
 def load_replace(bq, table_id, rows):
+    """테이블 전체 교체 (WRITE_TRUNCATE). 백필/당일 갱신용."""
     full = ensure_table(bq, table_id)
     job_config = bigquery.LoadJobConfig(schema=bq_schema(), write_disposition="WRITE_TRUNCATE")
     bq.load_table_from_json(rows, full, job_config=job_config).result()
     print(f"[{table_id}] 전체 교체: {len(rows)} rows")
 
 
-def load_merge_day(bq, table_id, rows, day):
+def load_merge_range(bq, table_id, rows, start, end):
+    """[start, end] 구간만 지우고 다시 넣기 + KEEP_DAYS 초과분 정리."""
     full = ensure_table(bq, table_id)
-    bq.query(f"DELETE FROM `{full}` WHERE date = '{day}'").result()
+    bq.query(f"DELETE FROM `{full}` WHERE date BETWEEN '{start}' AND '{end}'").result()
     if rows:
         job_config = bigquery.LoadJobConfig(schema=bq_schema(), write_disposition="WRITE_APPEND")
         bq.load_table_from_json(rows, full, job_config=job_config).result()
-    cutoff = (dt.datetime.now(KST).date() - dt.timedelta(days=BACKFILL_DAYS)).isoformat()
+    cutoff = (dt.datetime.now(KST).date() - dt.timedelta(days=KEEP_DAYS)).isoformat()
     bq.query(f"DELETE FROM `{full}` WHERE date < '{cutoff}'").result()
-    print(f"[{table_id}] {day} 갱신 ({len(rows)} rows), {cutoff} 이전 정리")
+    print(f"[{table_id}] {start}~{end} 갱신 ({len(rows)} rows), {cutoff} 이전 정리")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", required=True, choices=["backfill", "daily", "d0"])
+    ap.add_argument("--mode", required=True, choices=["daily", "d0"])
     args = ap.parse_args()
 
     bq = bigquery.Client(project=GCP_PROJECT)
     ensure_dataset(bq)
     today = dt.datetime.now(KST).date()
+    yesterday = today - dt.timedelta(days=1)
 
-    if args.mode == "backfill":
-        start = (today - dt.timedelta(days=BACKFILL_DAYS)).isoformat()
-        end = (today - dt.timedelta(days=1)).isoformat()
-        print(f"[backfill] {start} ~ {end}")
-        load_replace(bq, TABLE_DAILY, fetch_all(start, end))
-    elif args.mode == "daily":
-        yday = (today - dt.timedelta(days=1)).isoformat()
-        print(f"[daily] {yday}")
-        load_merge_day(bq, TABLE_DAILY, fetch_all(yday, yday), yday)
+    if args.mode == "daily":
+        if BACKFILL_DAYS > 0:
+            start = (today - dt.timedelta(days=BACKFILL_DAYS)).isoformat()
+            end = yesterday.isoformat()
+            print(f"[daily/backfill {BACKFILL_DAYS}d] {start} ~ {end}")
+            load_replace(bq, TABLE_DAILY, fetch_all(start, end))
+        else:
+            start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
+            end = yesterday.isoformat()
+            print(f"[daily/lookback {LOOKBACK_DAYS}d] {start} ~ {end}")
+            load_merge_range(bq, TABLE_DAILY, fetch_all(start, end), start, end)
     elif args.mode == "d0":
         d = today.isoformat()
         print(f"[d0] {d}")
