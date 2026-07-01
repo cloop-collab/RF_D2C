@@ -1,4 +1,4 @@
-name: GA4 D0 Intraday (당일 시간당 갱신)
+name: GA4 to BigQuery Hourly (Today)
 
 on:
   schedule:
