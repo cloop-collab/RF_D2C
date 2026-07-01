@@ -3,15 +3,15 @@
 """
 naver_to_bigquery.py
 --------------------
-네이버 검색광고(Search Ad, SA) 성과를 BigQuery에 적재.
-NAVER_LEVEL 로 단위 선택: "campaign"(기본) 또는 "keyword".
+네이버 검색광고(SA) 성과를 BigQuery 단일 테이블에 적재.
+캠페인 단위 + 키워드 단위를 한 테이블에 담고 `level` 컬럼(campaign/keyword)으로 구분.
 
-  - campaign: 캠페인 단위 성과 → rf_naver_sa_ads
-  - keyword : 캠페인>광고그룹>키워드 전체를 순회해 키워드 단위 성과 → rf_naver_sa_kw
+  NAVER_LEVEL: both(기본) | campaign | keyword
+  테이블      : rf_naver_sa_ads (일) / rf_naver_sa_ads_d0 (시간당)
 
-공통 규칙
-  * 하루씩 /stats 호출 → 날짜 파티션 단위 WRITE_TRUNCATE(덮어쓰기, 중복 없음)
-  * 지표는 네이버가 주는 최대치 + raw_json 보관
+공통
+  * 하루씩 /stats → 캠페인+키워드 행을 모아 날짜 파티션 단위 WRITE_TRUNCATE(덮어쓰기)
+  * 지표 최대치 + raw_json 보관
   * LP 구분: SA=캠페인명 '스토어/스스'→스마트스토어, DA='asd'→스마트스토어, 그 외 자사몰
   * 모드: 일상(LOOKBACK_DAYS) / 백필(BACKFILL_DAYS>0, 예 365=1년)
 """
@@ -34,72 +34,59 @@ from google.api_core.exceptions import NotFound
 BASE_URL = "https://api.searchad.naver.com"
 
 ACCOUNTS = [
-    {
-        "name": "CLOOP",
-        "license": os.environ.get("NAVER_CLOOP_LICENSE", ""),
-        "secret": os.environ.get("NAVER_CLOOP_SECRET", ""),
-        "customer_id": os.environ.get("NAVER_CLOOP_CUSTOMER_ID", "1762559"),
-        "media": "SA",
-    },
-    {
-        "name": "SPRINT",
-        "license": os.environ.get("NAVER_SPRINT_LICENSE", ""),
-        "secret": os.environ.get("NAVER_SPRINT_SECRET", ""),
-        "customer_id": os.environ.get("NAVER_SPRINT_CUSTOMER_ID", "3750104"),
-        "media": "SA",
-    },
+    {"name": "CLOOP",
+     "license": os.environ.get("NAVER_CLOOP_LICENSE", ""),
+     "secret": os.environ.get("NAVER_CLOOP_SECRET", ""),
+     "customer_id": os.environ.get("NAVER_CLOOP_CUSTOMER_ID", "1762559"),
+     "media": "SA"},
+    {"name": "SPRINT",
+     "license": os.environ.get("NAVER_SPRINT_LICENSE", ""),
+     "secret": os.environ.get("NAVER_SPRINT_SECRET", ""),
+     "customer_id": os.environ.get("NAVER_SPRINT_CUSTOMER_ID", "3750104"),
+     "media": "SA"},
 ]
 
-LEVEL = os.environ.get("NAVER_LEVEL", "campaign").lower()   # campaign | keyword
+LEVEL = os.environ.get("NAVER_LEVEL", "both").lower()   # both | campaign | keyword
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
-BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")  # >0 이면 최근 N일 백필
+BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")
 SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN") or "0.3")
 ID_CHUNK = int(os.environ.get("ID_CHUNK", "100"))
 
 BQ_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_DATASET = os.environ.get("BQ_DATASET", "naver_ads")
-BQ_TABLE = os.environ.get("BQ_TABLE", "rf_naver_sa_ads" if LEVEL == "campaign" else "rf_naver_sa_kw")
+BQ_TABLE = os.environ.get("BQ_TABLE", "rf_naver_sa_ads")
 BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 
-# 네이버가 주는 최대 지표 (전환계열은 전환추적 미설정 시 거부될 수 있어 폴백 처리)
 STAT_FIELDS = ["impCnt", "clkCnt", "salesAmt", "ctr", "cpc", "avgRnk",
                "ccnt", "crto", "cpConv", "convAmt", "ror"]
 BASE_FIELDS = ["impCnt", "clkCnt", "salesAmt", "ctr", "cpc", "avgRnk"]
 
-NUMERIC = {  # 값 캐스팅
-    "impCnt": "int", "clkCnt": "int", "salesAmt": "float", "ctr": "float",
-    "cpc": "float", "avgRnk": "float", "ccnt": "float", "crto": "float",
-    "cpConv": "float", "convAmt": "float", "ror": "float",
-}
-# BigQuery 컬럼명 매핑
-COLMAP = {
-    "impCnt": "impressions", "clkCnt": "clicks", "salesAmt": "cost",
-    "ctr": "ctr", "cpc": "cpc", "avgRnk": "avg_rank",
-    "ccnt": "conversions", "crto": "conv_rate", "cpConv": "cost_per_conv",
-    "convAmt": "conversion_value", "ror": "roas",
-}
+NUMERIC = {"impCnt": "int", "clkCnt": "int", "salesAmt": "float", "ctr": "float",
+           "cpc": "float", "avgRnk": "float", "ccnt": "float", "crto": "float",
+           "cpConv": "float", "convAmt": "float", "ror": "float"}
+COLMAP = {"impCnt": "impressions", "clkCnt": "clicks", "salesAmt": "cost",
+          "ctr": "ctr", "cpc": "cpc", "avgRnk": "avg_rank",
+          "ccnt": "conversions", "crto": "conv_rate", "cpConv": "cost_per_conv",
+          "convAmt": "conversion_value", "ror": "roas"}
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("naver_to_bigquery")
 
 
-# ── API (HMAC 서명) ────────────────────────────────────────────────────────
+# ── API ────────────────────────────────────────────────────────────────────
 def _signature(secret, ts, method, uri):
     msg = f"{ts}.{method}.{uri}"
-    d = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()
-    return base64.b64encode(d).decode()
+    return base64.b64encode(
+        hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
 
 
 def _headers(acct, method, uri):
     ts = str(int(time.time() * 1000))
-    return {
-        "Content-Type": "application/json; charset=UTF-8",
-        "X-Timestamp": ts,
-        "X-API-KEY": acct["license"],
-        "X-Customer": str(acct["customer_id"]),
-        "X-Signature": _signature(acct["secret"], ts, method, uri),
-    }
+    return {"Content-Type": "application/json; charset=UTF-8",
+            "X-Timestamp": ts, "X-API-KEY": acct["license"],
+            "X-Customer": str(acct["customer_id"]),
+            "X-Signature": _signature(acct["secret"], ts, method, uri)}
 
 
 def _get(acct, uri, params=None, max_retries=5):
@@ -124,34 +111,30 @@ def get_campaigns(acct):
     return _get(acct, "/ncc/campaigns")
 
 
-def get_adgroups(acct, campaign_id):
-    return _get(acct, "/ncc/adgroups", params={"nccCampaignId": campaign_id})
+def get_adgroups(acct, cid):
+    return _get(acct, "/ncc/adgroups", params={"nccCampaignId": cid})
 
 
-def get_keywords(acct, adgroup_id):
-    return _get(acct, "/ncc/keywords", params={"nccAdgroupId": adgroup_id})
+def get_keywords(acct, agid):
+    return _get(acct, "/ncc/keywords", params={"nccAdgroupId": agid})
 
 
 def get_stats_for_day(acct, ids, day, fields):
-    params = {
-        "ids": ids,
-        "fields": json.dumps(fields),
-        "timeRange": json.dumps({"since": day, "until": day}),
-    }
+    params = {"ids": ids, "fields": json.dumps(fields),
+              "timeRange": json.dumps({"since": day, "until": day})}
     res = _get(acct, "/stats", params=params)
     return res.get("data", []) if isinstance(res, dict) else (res or [])
 
 
 def stats_with_fallback(acct, ids, day):
-    """전체 지표로 시도, 실패하면 기본 지표로 폴백."""
     try:
         return get_stats_for_day(acct, ids, day, STAT_FIELDS)
     except RuntimeError as e:
-        log.warning("전체 지표 실패(%s) → 기본 지표로 폴백", str(e)[:120])
+        log.warning("전체 지표 실패(%s) → 기본 지표 폴백", str(e)[:120])
         return get_stats_for_day(acct, ids, day, BASE_FIELDS)
 
 
-# ── LP 구분 / 변환 ─────────────────────────────────────────────────────────
+# ── 변환 ───────────────────────────────────────────────────────────────────
 def lp_type(media, name):
     name = name or ""
     if media == "SA" and re.search(r"스토어|스스", name):
@@ -175,9 +158,37 @@ def _metrics(rec):
     return {COLMAP[k]: _num(rec, k) for k in COLMAP}
 
 
+def _base_row(day, acct, level, cid, cname, agid=None, agname=None,
+              kid=None, kw=None, rec=None):
+    row = {
+        "report_date": day, "media": acct["media"], "account": acct["name"],
+        "customer_id": str(acct["customer_id"]), "level": level,
+        "campaign_id": cid, "campaign_name": cname,
+        "adgroup_id": agid, "adgroup_name": agname,
+        "keyword_id": kid, "keyword": kw,
+        "lp_type": lp_type(acct["media"], cname),
+        "raw_json": json.dumps(rec, ensure_ascii=False) if rec is not None else None,
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+    }
+    row.update(_metrics(rec or {}))
+    return row
+
+
 # ── 스키마 ─────────────────────────────────────────────────────────────────
-def _metric_schema():
+def build_schema():
     return [
+        bigquery.SchemaField("report_date", "DATE"),
+        bigquery.SchemaField("media", "STRING"),
+        bigquery.SchemaField("account", "STRING"),
+        bigquery.SchemaField("customer_id", "STRING"),
+        bigquery.SchemaField("level", "STRING"),
+        bigquery.SchemaField("campaign_id", "STRING"),
+        bigquery.SchemaField("campaign_name", "STRING"),
+        bigquery.SchemaField("adgroup_id", "STRING"),
+        bigquery.SchemaField("adgroup_name", "STRING"),
+        bigquery.SchemaField("keyword_id", "STRING"),
+        bigquery.SchemaField("keyword", "STRING"),
+        bigquery.SchemaField("lp_type", "STRING"),
         bigquery.SchemaField("impressions", "INT64"),
         bigquery.SchemaField("clicks", "INT64"),
         bigquery.SchemaField("cost", "FLOAT64"),
@@ -189,31 +200,9 @@ def _metric_schema():
         bigquery.SchemaField("cost_per_conv", "FLOAT64"),
         bigquery.SchemaField("conversion_value", "FLOAT64"),
         bigquery.SchemaField("roas", "FLOAT64"),
-    ]
-
-
-def build_schema():
-    head = [
-        bigquery.SchemaField("report_date", "DATE"),
-        bigquery.SchemaField("media", "STRING"),
-        bigquery.SchemaField("account", "STRING"),
-        bigquery.SchemaField("customer_id", "STRING"),
-        bigquery.SchemaField("campaign_id", "STRING"),
-        bigquery.SchemaField("campaign_name", "STRING"),
-    ]
-    if LEVEL == "keyword":
-        head += [
-            bigquery.SchemaField("adgroup_id", "STRING"),
-            bigquery.SchemaField("adgroup_name", "STRING"),
-            bigquery.SchemaField("keyword_id", "STRING"),
-            bigquery.SchemaField("keyword", "STRING"),
-        ]
-    head += [bigquery.SchemaField("lp_type", "STRING")]
-    tail = [
         bigquery.SchemaField("raw_json", "STRING"),
         bigquery.SchemaField("ingested_at", "TIMESTAMP"),
     ]
-    return head + _metric_schema() + tail
 
 
 def ensure_table(client):
@@ -230,15 +219,14 @@ def ensure_table(client):
             table.schema = list(table.schema) + missing
             client.update_table(table, ["schema"])
             log.info("스키마 컬럼 추가: %s", [f.name for f in missing])
-        log.info("table ready(existing): %s (level=%s)", table_id, LEVEL)
+        log.info("table ready(existing): %s", table_id)
     except NotFound:
         table = bigquery.Table(table_id, schema=desired)
         table.time_partitioning = bigquery.TimePartitioning(
             type_=bigquery.TimePartitioningType.DAY, field="report_date")
-        table.clustering_fields = (["keyword_id", "campaign_id"] if LEVEL == "keyword"
-                                   else ["campaign_id", "lp_type"])
+        table.clustering_fields = ["level", "campaign_id", "lp_type"]
         client.create_table(table)
-        log.info("table created: %s (level=%s)", table_id, LEVEL)
+        log.info("table created: %s", table_id)
     return table_id
 
 
@@ -259,8 +247,7 @@ def load_by_partition(client, table_id, rows):
         cfg = bigquery.LoadJobConfig(
             schema=schema,
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-        )
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON)
         client.load_table_from_json(drows, dest, job_config=cfg).result()
         log.info("loaded(overwrite) %s: %d rows", d, len(drows))
 
@@ -270,10 +257,8 @@ def _chunks(seq, n):
         yield seq[i:i + n]
 
 
-# ── 수집: 캠페인 단위 ──────────────────────────────────────────────────────
-def collect_campaign(acct, days):
-    campaigns = get_campaigns(acct)
-    id2name = {c["nccCampaignId"]: c.get("name", "") for c in campaigns}
+# ── 수집 ───────────────────────────────────────────────────────────────────
+def collect_campaign(acct, days, id2name):
     ids = list(id2name.keys())
     log.info("[%s] campaigns=%d", acct["name"], len(ids))
     rows = []
@@ -281,27 +266,15 @@ def collect_campaign(acct, days):
         for chunk in _chunks(ids, ID_CHUNK):
             for rec in stats_with_fallback(acct, chunk, day):
                 cid = rec.get("id")
-                cname = id2name.get(cid, "")
-                row = {
-                    "report_date": day, "media": acct["media"],
-                    "account": acct["name"], "customer_id": str(acct["customer_id"]),
-                    "campaign_id": cid, "campaign_name": cname,
-                    "lp_type": lp_type(acct["media"], cname),
-                    "raw_json": json.dumps(rec, ensure_ascii=False),
-                    "ingested_at": datetime.now(timezone.utc).isoformat(),
-                }
-                row.update(_metrics(rec))
-                rows.append(row)
+                rows.append(_base_row(day, acct, "campaign", cid,
+                                      id2name.get(cid, ""), rec=rec))
             time.sleep(SLEEP_BETWEEN)
     return rows
 
 
-# ── 수집: 키워드 단위 ──────────────────────────────────────────────────────
 def build_keyword_map(acct):
-    """kwid -> {keyword, adgroup_id/name, campaign_id/name}"""
     kmap = {}
-    campaigns = get_campaigns(acct)
-    for c in campaigns:
+    for c in get_campaigns(acct):
         cid, cname = c["nccCampaignId"], c.get("name", "")
         try:
             adgroups = get_adgroups(acct, cid)
@@ -321,8 +294,7 @@ def build_keyword_map(acct):
                 kmap[k["nccKeywordId"]] = {
                     "keyword": k.get("keyword", ""),
                     "adgroup_id": agid, "adgroup_name": agname,
-                    "campaign_id": cid, "campaign_name": cname,
-                }
+                    "campaign_id": cid, "campaign_name": cname}
     return kmap
 
 
@@ -335,21 +307,11 @@ def collect_keyword(acct, days):
         for chunk in _chunks(ids, ID_CHUNK):
             for rec in stats_with_fallback(acct, chunk, day):
                 kid = rec.get("id")
-                meta = kmap.get(kid, {})
-                cname = meta.get("campaign_name", "")
-                row = {
-                    "report_date": day, "media": acct["media"],
-                    "account": acct["name"], "customer_id": str(acct["customer_id"]),
-                    "campaign_id": meta.get("campaign_id"), "campaign_name": cname,
-                    "adgroup_id": meta.get("adgroup_id"),
-                    "adgroup_name": meta.get("adgroup_name"),
-                    "keyword_id": kid, "keyword": meta.get("keyword", ""),
-                    "lp_type": lp_type(acct["media"], cname),
-                    "raw_json": json.dumps(rec, ensure_ascii=False),
-                    "ingested_at": datetime.now(timezone.utc).isoformat(),
-                }
-                row.update(_metrics(rec))
-                rows.append(row)
+                m = kmap.get(kid, {})
+                rows.append(_base_row(day, acct, "keyword",
+                                      m.get("campaign_id"), m.get("campaign_name", ""),
+                                      m.get("adgroup_id"), m.get("adgroup_name"),
+                                      kid, m.get("keyword", ""), rec=rec))
             time.sleep(SLEEP_BETWEEN)
     return rows
 
@@ -367,13 +329,18 @@ def collect_rows(since_s, until_s):
             continue
         log.info("=== account %s (level=%s, %s~%s) ===",
                  acct["name"], LEVEL, since_s, until_s)
-        rows += collect_keyword(acct, days) if LEVEL == "keyword" else collect_campaign(acct, days)
+        if LEVEL in ("both", "campaign"):
+            id2name = {c["nccCampaignId"]: c.get("name", "")
+                       for c in get_campaigns(acct)}
+            rows += collect_campaign(acct, days, id2name)
+        if LEVEL in ("both", "keyword"):
+            rows += collect_keyword(acct, days)
     return rows
 
 
 def main():
-    if LEVEL not in ("campaign", "keyword"):
-        log.error("NAVER_LEVEL 은 campaign 또는 keyword 여야 합니다.")
+    if LEVEL not in ("both", "campaign", "keyword"):
+        log.error("NAVER_LEVEL 은 both|campaign|keyword 중 하나여야 합니다.")
         sys.exit(1)
     if not any(a["license"] and a["secret"] for a in ACCOUNTS):
         log.error("네이버 키(LICENSE/SECRET) 환경변수가 비어 있습니다.")

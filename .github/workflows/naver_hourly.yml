@@ -19,6 +19,8 @@ jobs:
       NAVER_SPRINT_CUSTOMER_ID: ${{ secrets.NAVER_SPRINT_CUSTOMER_ID }}
       BQ_PROJECT: rf-ads-db-500505
       BQ_DATASET: naver_ads
+      BQ_TABLE: rf_naver_sa_ads_d0
+      NAVER_LEVEL: both
       LOOKBACK_DAYS: "1"
     steps:
       - uses: actions/checkout@v4
@@ -31,15 +33,7 @@ jobs:
           cat > sa_key.json <<'KEY'
           ${{ secrets.GCP_SA_KEY }}
           KEY
-      - name: 캠페인 당일 적재
-        env:
-          NAVER_LEVEL: campaign
-          BQ_TABLE: rf_naver_sa_ads_d0
-        run: python naver/naver_to_bigquery.py
-      - name: 키워드 당일 적재
-        env:
-          NAVER_LEVEL: keyword
-          BQ_TABLE: rf_naver_sa_kw_d0
+      - name: 당일 적재 (캠페인+키워드 한 테이블)
         run: python naver/naver_to_bigquery.py
       - if: always()
         run: rm -f sa_key.json
