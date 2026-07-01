@@ -4,8 +4,9 @@
 하나의 스크립트(naver_to_bigquery.py)가 NAVER_LEVEL 로 단위 선택.
 
 ## 테이블
-- 캠페인 단위: `rf_naver_sa_ads` (매일 06:00 KST, 7일) / `rf_naver_sa_ads_d0` (매시간)
-- 키워드 단위: `rf_naver_sa_kw`  (매일 06:30 KST, 7일) / `rf_naver_sa_kw_d0`  (매시간)
+하나의 Daily/Hourly 워크플로에서 캠페인→키워드를 순서대로 적재.
+- Daily(매일 06:00 KST, 7일): `rf_naver_sa_ads`, `rf_naver_sa_kw`
+- Hourly(매시간, 당일): `rf_naver_sa_ads_d0`, `rf_naver_sa_kw_d0`
 
 ## 지표(최대치)
 impressions, clicks, cost, ctr, cpc, avg_rank, conversions, conv_rate,
