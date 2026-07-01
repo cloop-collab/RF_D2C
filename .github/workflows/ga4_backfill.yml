@@ -1,4 +1,4 @@
-name: GA4 Backfill (수동 1회 · 최근 1년)
+name: GA4 to BigQuery Backfill
 
 on:
   workflow_dispatch:
