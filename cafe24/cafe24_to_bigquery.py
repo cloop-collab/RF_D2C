@@ -79,9 +79,11 @@ BQ_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_DATASET = os.environ.get("BQ_DATASET", "cafe24")
 BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 
+# customers(회원 마스터)는 제외: 카페24 /customers 는 member_id/cellphone 필터가 없으면
+# 전체 목록 조회를 막음(개인정보 보호). 회원 데이터는 orders.member_id + 통계 members 로 확보.
 ALL_TABLES = [
     "sales_daily", "product_sales", "traffic", "traffic_keyword", "members",
-    "orders", "products", "customers",
+    "orders", "products",
 ]
 _env_tables = os.environ.get("CAFE24_TABLES", "").strip()
 TABLES = [t.strip() for t in _env_tables.split(",") if t.strip()] or ALL_TABLES
@@ -563,53 +565,52 @@ def _order_date(rec):
     return v[:10] if v else None
 
 
-def collect_orders(token_mgr, shops, since_s, until_s):
+def collect_orders_window(token_mgr, s, w_since, w_until):
+    """단일 shop + 단일 90일 구간의 주문/주문상품 수집 (페이지네이션)."""
     orders, items = [], []
-    for s in shops:
-        for w_since, w_until in window_range(since_s, until_s, days=90):
-            offset = 0
-            while True:
-                params = {"shop_no": s["shop_no"], "start_date": w_since,
-                          "end_date": w_until, "date_type": "order_date",
-                          "embed": "items", "limit": PAGE_LIMIT, "offset": offset}
-                try:
-                    data = admin_get("/orders", token_mgr, params=params)
-                except RuntimeError as e:
-                    log.warning("[orders/%s %s~%s] 실패: %s", s["mall"], w_since,
-                                w_until, str(e)[:150])
-                    break
-                chunk = data.get("orders", []) if isinstance(data, dict) else []
-                for o in chunk:
-                    d = _order_date(o) or w_until
-                    oid = _s(o, "order_id")
-                    orders.append({
-                        "report_date": d, "order_id": oid,
-                        "shop_no": s["shop_no"], "mall": s["mall"],
-                        "member_id": _s(o, "member_id"),
-                        "order_status": _s(o, "order_status", "status"),
-                        "payment_amount": _f(o, "payment_amount", "actual_payment_amount"),
-                        "order_amount": _f(o, "order_price_amount", "order_amount"),
-                        "currency": _s(o, "currency"),
-                        "ordered_at": _s(o, "order_date", "payment_date"),
-                        "raw_json": json.dumps(o, ensure_ascii=False),
-                        "ingested_at": now_utc_iso(),
-                    })
-                    for it in (o.get("items") or []):
-                        items.append({
-                            "report_date": d, "order_id": oid,
-                            "shop_no": s["shop_no"], "mall": s["mall"],
-                            "product_no": _s(it, "product_no"),
-                            "variant_code": _s(it, "variant_code"),
-                            "product_name": _s(it, "product_name"),
-                            "quantity": int(_f(it, "quantity") or 0),
-                            "product_price": _f(it, "product_price", "payment_amount"),
-                            "raw_json": json.dumps(it, ensure_ascii=False),
-                            "ingested_at": now_utc_iso(),
-                        })
-                if len(chunk) < PAGE_LIMIT:
-                    break
-                offset += PAGE_LIMIT
-                time.sleep(SLEEP_BETWEEN)
+    offset = 0
+    while True:
+        params = {"shop_no": s["shop_no"], "start_date": w_since,
+                  "end_date": w_until, "date_type": "order_date",
+                  "embed": "items", "limit": PAGE_LIMIT, "offset": offset}
+        try:
+            data = admin_get("/orders", token_mgr, params=params)
+        except RuntimeError as e:
+            log.warning("[orders/%s %s~%s] 실패: %s", s["mall"], w_since,
+                        w_until, str(e)[:150])
+            break
+        chunk = data.get("orders", []) if isinstance(data, dict) else []
+        for o in chunk:
+            d = _order_date(o) or w_until
+            oid = _s(o, "order_id")
+            orders.append({
+                "report_date": d, "order_id": oid,
+                "shop_no": s["shop_no"], "mall": s["mall"],
+                "member_id": _s(o, "member_id"),
+                "order_status": _s(o, "order_status", "status"),
+                "payment_amount": _f(o, "payment_amount", "actual_payment_amount"),
+                "order_amount": _f(o, "order_price_amount", "order_amount"),
+                "currency": _s(o, "currency"),
+                "ordered_at": _s(o, "order_date", "payment_date"),
+                "raw_json": json.dumps(o, ensure_ascii=False),
+                "ingested_at": now_utc_iso(),
+            })
+            for it in (o.get("items") or []):
+                items.append({
+                    "report_date": d, "order_id": oid,
+                    "shop_no": s["shop_no"], "mall": s["mall"],
+                    "product_no": _s(it, "product_no"),
+                    "variant_code": _s(it, "variant_code"),
+                    "product_name": _s(it, "product_name"),
+                    "quantity": int(_f(it, "quantity") or 0),
+                    "product_price": _f(it, "product_price", "payment_amount"),
+                    "raw_json": json.dumps(it, ensure_ascii=False),
+                    "ingested_at": now_utc_iso(),
+                })
+        if len(chunk) < PAGE_LIMIT:
+            break
+        offset += PAGE_LIMIT
+        time.sleep(SLEEP_BETWEEN)
     return orders, items
 
 
@@ -658,14 +659,17 @@ def run_analytics(client, token_mgr, shops, since_s, until_s):
     for name in ["sales_daily", "product_sales", "traffic", "traffic_keyword", "members"]:
         if name not in TABLES:
             continue
-        table = _suffix(name)
-        table_id = ensure_table(client, table, ANALYTICS_SCHEMA,
-                                partition_field="report_date",
-                                cluster=["mall", "dim1"])
-        rows = collect_analytics(name, token_mgr, shops, since_s, until_s)
-        load_by_partition(client, table_id, ANALYTICS_SCHEMA, rows, "report_date")
-        if not IS_D0:
-            ensure_views(client, table, shops)
+        try:
+            table = _suffix(name)
+            table_id = ensure_table(client, table, ANALYTICS_SCHEMA,
+                                    partition_field="report_date",
+                                    cluster=["mall", "dim1"])
+            rows = collect_analytics(name, token_mgr, shops, since_s, until_s)
+            load_by_partition(client, table_id, ANALYTICS_SCHEMA, rows, "report_date")
+            if not IS_D0:
+                ensure_views(client, table, shops)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[%s] 수집/적재 실패, 건너뜀: %s", name, str(e)[:200])
 
 
 def run_orders(client, token_mgr, shops, since_s, until_s):
@@ -675,9 +679,15 @@ def run_orders(client, token_mgr, shops, since_s, until_s):
                         partition_field="report_date", cluster=["mall", "order_id"])
     i_id = ensure_table(client, i_table, ORDER_ITEMS_SCHEMA,
                         partition_field="report_date", cluster=["mall", "product_no"])
-    orders, items = collect_orders(token_mgr, shops, since_s, until_s)
-    load_by_partition(client, o_id, ORDERS_SCHEMA, orders, "report_date")
-    load_by_partition(client, i_id, ORDER_ITEMS_SCHEMA, items, "report_date")
+    # 90일 구간마다(양쪽 몰 합쳐) 즉시 적재 → 대량 백필 시 메모리 한정·부분 안전
+    for w_since, w_until in window_range(since_s, until_s, days=90):
+        w_orders, w_items = [], []
+        for s in shops:
+            o, i = collect_orders_window(token_mgr, s, w_since, w_until)
+            w_orders += o
+            w_items += i
+        load_by_partition(client, o_id, ORDERS_SCHEMA, w_orders, "report_date")
+        load_by_partition(client, i_id, ORDER_ITEMS_SCHEMA, w_items, "report_date")
     if not IS_D0:
         ensure_views(client, o_table, shops)
         ensure_views(client, i_table, shops)
@@ -726,16 +736,29 @@ def main():
              "D0" if IS_D0 else ("백필" if BACKFILL_DAYS > 0 else "일상"),
              since_s, until_s, TABLES, [s["mall"] for s in shops])
 
+    failures = []
+    sections = []
     if any(t in TABLES for t in
            ["sales_daily", "product_sales", "traffic", "traffic_keyword", "members"]):
-        run_analytics(client, token_mgr, shops, since_s, until_s)
+        sections.append(("analytics", lambda: run_analytics(client, token_mgr, shops, since_s, until_s)))
     if "orders" in TABLES:
-        run_orders(client, token_mgr, shops, orders_since, until_s)
+        sections.append(("orders", lambda: run_orders(client, token_mgr, shops, orders_since, until_s)))
     if "products" in TABLES:
-        run_products(client, token_mgr, shops)
+        sections.append(("products", lambda: run_products(client, token_mgr, shops)))
     if "customers" in TABLES:
-        run_customers(client, token_mgr, shops)
-    log.info("완료")
+        sections.append(("customers", lambda: run_customers(client, token_mgr, shops)))
+
+    for label, fn in sections:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            log.warning("[%s] 섹션 실패, 계속 진행: %s", label, str(e)[:200])
+            failures.append(label)
+
+    if failures:
+        log.warning("완료(일부 실패): %s", ", ".join(failures))
+    else:
+        log.info("완료(전체 성공)")
 
 
 def _wants_full_orders():
