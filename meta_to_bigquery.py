@@ -350,7 +350,7 @@ def _minus_months(d, months):
 
 
 def run_backfill(client, table_id, months):
-    until = date.today()
+    until = datetime.now(KST).date()
     # 메타는 시작일이 현재로부터 37개월을 넘으면 거부(#3018).
     # 정확히 N개월 전에서 5일 버퍼를 둬 안전하게 시작.
     since = _minus_months(until, months) + timedelta(days=5)

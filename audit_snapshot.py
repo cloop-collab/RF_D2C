@@ -10,6 +10,9 @@ audit_snapshot.py
 """
 import os, json, logging
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
 import requests
 from google.cloud import bigquery
 
@@ -55,7 +58,7 @@ def fetch(acct, since, until):
 
 def main():
     now = datetime.now(timezone.utc).isoformat()
-    until = date.today()
+    until = datetime.now(KST).date()
     since = until - timedelta(days=DAYS - 1)
     out = []
     for a in ACCTS:
