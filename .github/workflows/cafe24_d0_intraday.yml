@@ -1,0 +1,38 @@
+name: Cafe24 to BigQuery Hourly (Today)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # 매시 정각(UTC) = 매시간 1회, 당일 데이터 갱신
+  workflow_dispatch: {}
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_DATASET: cafe24
+      BQ_LOCATION: asia-northeast3
+      CAFE24_D0: "1"
+      CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
+      CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
+      CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
+      CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
+      # 당일 시간당 갱신은 통계 + 주문만 (마스터 스냅샷은 Daily에서만)
+      CAFE24_TABLES: "sales_daily,product_sales,traffic,traffic_keyword,members,orders"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r cafe24/requirements.txt
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재 (당일)
+        run: python cafe24/cafe24_to_bigquery.py
+      - if: always()
+        run: rm -f sa_key.json
