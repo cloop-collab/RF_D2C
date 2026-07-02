@@ -1,0 +1,53 @@
+name: Cafe24 to BigQuery Daily
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 매일 06:00 KST (= 21:00 UTC), 네이버와 동일 시간대
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(최근 7일)."
+        required: false
+        default: ""
+      orders_full:
+        description: "주문 전체기간 백필 여부 (1 입력 시 CAFE24_ORDERS_START부터). 통계/마스터에는 영향 없음."
+        required: false
+        default: ""
+      tables:
+        description: "대상 테이블 제한 (콤마목록, 예: orders,products). 비우면 전체."
+        required: false
+        default: ""
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_DATASET: cafe24
+      BQ_LOCATION: asia-northeast3
+      LOOKBACK_DAYS: "7"
+      CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
+      CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
+      CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
+      CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
+      CAFE24_ORDERS_START: "2018-01-01"
+      BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
+      CAFE24_ORDERS_FULL: ${{ github.event.inputs.orders_full }}
+      CAFE24_TABLES: ${{ github.event.inputs.tables }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r cafe24/requirements.txt
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재 (통계 + 관리 API)
+        run: python cafe24/cafe24_to_bigquery.py
+      - if: always()
+        run: rm -f sa_key.json
