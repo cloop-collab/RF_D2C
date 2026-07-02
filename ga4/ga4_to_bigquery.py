@@ -14,10 +14,9 @@ GA4 -> BigQuery 적재 (cloop-collab/RF_D2C · ga4 폴더)
   python ga4/ga4_to_bigquery.py --mode d0
      · 당일 데이터로 rf_ga4_d0 교체 (시간당)
 
-환경변수(워크플로우에서 주입, 기본값 있음):
-  BQ_PROJECT / BQ_DATASET / BQ_TABLE / BQ_TABLE_D0 / BQ_LOCATION
-  LOOKBACK_DAYS(기본 7) / BACKFILL_DAYS(기본 0) / KEEP_DAYS(기본 365)
-  GOOGLE_APPLICATION_CREDENTIALS = 서비스계정 JSON 경로
+UTM 매핑:
+  utm_source=session_source / utm_medium=session_medium / utm_campaign=session_campaign_name
+  utm_id=session_campaign_id / utm_term=session_manual_term / utm_content=session_manual_ad_content
 """
 
 import argparse
@@ -51,12 +50,16 @@ PROPERTIES = {
     "499489594": "sprint",   # 스프린트몰
 }
 
+# GA4 차원 (UTM 전체 포함). date 제외 7개 + date = 8개 (API 최대 9개 이내)
 DIMENSIONS = [
     "date",
-    "sessionSource",
-    "sessionMedium",
+    "sessionSource",              # utm_source
+    "sessionMedium",              # utm_medium
+    "sessionCampaignName",        # utm_campaign
+    "sessionCampaignId",          # utm_id
+    "sessionManualTerm",          # utm_term
+    "sessionManualAdContent",     # utm_content
     "sessionDefaultChannelGroup",
-    "sessionManualAdContent",
 ]
 METRICS = [
     "sessions",
@@ -73,8 +76,11 @@ DIM_COLS = {
     "date": "date",
     "sessionSource": "session_source",
     "sessionMedium": "session_medium",
-    "sessionDefaultChannelGroup": "session_default_channel_group",
+    "sessionCampaignName": "session_campaign_name",
+    "sessionCampaignId": "session_campaign_id",
+    "sessionManualTerm": "session_manual_term",
     "sessionManualAdContent": "session_manual_ad_content",
+    "sessionDefaultChannelGroup": "session_default_channel_group",
 }
 METRIC_COLS = {
     "sessions": "sessions",
@@ -95,10 +101,13 @@ def bq_schema():
         bigquery.SchemaField("brand", "STRING"),
         bigquery.SchemaField("property_id", "STRING"),
         bigquery.SchemaField("date", "DATE"),
-        bigquery.SchemaField("session_source", "STRING"),
-        bigquery.SchemaField("session_medium", "STRING"),
+        bigquery.SchemaField("session_source", "STRING"),              # utm_source
+        bigquery.SchemaField("session_medium", "STRING"),              # utm_medium
+        bigquery.SchemaField("session_campaign_name", "STRING"),       # utm_campaign
+        bigquery.SchemaField("session_campaign_id", "STRING"),         # utm_id
+        bigquery.SchemaField("session_manual_term", "STRING"),         # utm_term
+        bigquery.SchemaField("session_manual_ad_content", "STRING"),   # utm_content
         bigquery.SchemaField("session_default_channel_group", "STRING"),
-        bigquery.SchemaField("session_manual_ad_content", "STRING"),
     ]
     for _, col in METRIC_COLS.items():
         bq_type = "FLOAT" if col in FLOAT_METRICS else "INTEGER"
@@ -172,19 +181,26 @@ def ensure_table(bq, table_id):
 
 
 def load_replace(bq, table_id, rows):
-    """테이블 전체 교체 (WRITE_TRUNCATE). 백필/당일 갱신용."""
+    """테이블 전체 교체 (WRITE_TRUNCATE). 백필/당일 갱신용. 스키마도 최신으로 반영."""
     full = ensure_table(bq, table_id)
-    job_config = bigquery.LoadJobConfig(schema=bq_schema(), write_disposition="WRITE_TRUNCATE")
+    job_config = bigquery.LoadJobConfig(
+        schema=bq_schema(),
+        write_disposition="WRITE_TRUNCATE",
+    )
     bq.load_table_from_json(rows, full, job_config=job_config).result()
     print(f"[{table_id}] 전체 교체: {len(rows)} rows")
 
 
 def load_merge_range(bq, table_id, rows, start, end):
-    """[start, end] 구간만 지우고 다시 넣기 + KEEP_DAYS 초과분 정리."""
+    """[start, end] 구간만 지우고 다시 넣기 + KEEP_DAYS 초과분 정리. (신규 컬럼 자동 추가 허용)"""
     full = ensure_table(bq, table_id)
     bq.query(f"DELETE FROM `{full}` WHERE date BETWEEN '{start}' AND '{end}'").result()
     if rows:
-        job_config = bigquery.LoadJobConfig(schema=bq_schema(), write_disposition="WRITE_APPEND")
+        job_config = bigquery.LoadJobConfig(
+            schema=bq_schema(),
+            write_disposition="WRITE_APPEND",
+            schema_update_options=["ALLOW_FIELD_ADDITION"],
+        )
         bq.load_table_from_json(rows, full, job_config=job_config).result()
     cutoff = (dt.datetime.now(KST).date() - dt.timedelta(days=KEEP_DAYS)).isoformat()
     bq.query(f"DELETE FROM `{full}` WHERE date < '{cutoff}'").result()
