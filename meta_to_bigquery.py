@@ -29,6 +29,7 @@ KST = ZoneInfo("Asia/Seoul")  # 데이터 기준 시간대(한국)
 
 import requests
 from google.cloud import bigquery
+from google.cloud.exceptions import NotFound
 
 # ──────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -225,6 +226,22 @@ def _extract_bad_field(message):
 # ──────────────────────────────────────────────────────────────────────────
 # 2) 응답 → BigQuery 행 변환
 # ──────────────────────────────────────────────────────────────────────────
+# 웹사이트(픽셀) 구매 우선순위: 픽셀 구매 → 통합 purchase → omni
+WEB_PURCHASE_TYPES = ["offsite_conversion.fb_pixel_purchase", "purchase", "omni_purchase"]
+
+
+def _first_action_value(r, key, types):
+    """actions/action_values 배열에서 우선순위 액션타입의 값을 하나 뽑는다 (없으면 None)."""
+    vals = {a.get("action_type"): a.get("value") for a in (r.get(key) or [])}
+    for t in types:
+        if t in vals:
+            try:
+                return float(vals[t])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def transform(rows, account_id):
     out = []
     for r in rows:
@@ -242,6 +259,8 @@ def transform(rows, account_id):
                 row[f] = str(val)
         for f in NESTED_FIELDS:
             row[f] = json.dumps(r[f], ensure_ascii=False) if f in r else None
+        row["web_purchase_value"] = _first_action_value(r, "action_values", WEB_PURCHASE_TYPES)
+        row["web_purchase_count"] = _first_action_value(r, "actions", WEB_PURCHASE_TYPES)
         row["report_date"] = r.get("date_start")
         if not row.get("account_id"):
             row["account_id"] = account_id
@@ -259,6 +278,8 @@ def build_schema():
         schema.append(bigquery.SchemaField(f, "FLOAT64" if f in NUMERIC_FIELDS else "STRING"))
     for f in NESTED_FIELDS:
         schema.append(bigquery.SchemaField(f, "STRING"))
+    schema.append(bigquery.SchemaField("web_purchase_value", "FLOAT64"))
+    schema.append(bigquery.SchemaField("web_purchase_count", "FLOAT64"))
     schema.append(bigquery.SchemaField("report_date", "DATE"))
     schema.append(bigquery.SchemaField("raw_json", "STRING"))
     schema.append(bigquery.SchemaField("ingested_at", "TIMESTAMP"))
@@ -270,11 +291,22 @@ def ensure_table(client):
     ds_ref.location = BQ_LOCATION
     client.create_dataset(ds_ref, exists_ok=True)
     table_id = f"{BQ_PROJECT}.{BQ_DATASET}.{BQ_TABLE}"
-    table = bigquery.Table(table_id, schema=build_schema())
-    table.time_partitioning = bigquery.TimePartitioning(
-        type_=bigquery.TimePartitioningType.DAY, field="report_date")
-    table.clustering_fields = ["account_id", "campaign_id"]
-    client.create_table(table, exists_ok=True)
+    desired = build_schema()
+    try:
+        t = client.get_table(table_id)
+        existing = {f.name for f in t.schema}
+        missing = [f for f in desired if f.name not in existing]
+        if missing:
+            t.schema = list(t.schema) + missing   # 신규 컬럼 NULLABLE 추가
+            client.update_table(t, ["schema"])
+            log.info("컬럼 추가: %s", [f.name for f in missing])
+    except NotFound:
+        table = bigquery.Table(table_id, schema=desired)
+        table.time_partitioning = bigquery.TimePartitioning(
+            type_=bigquery.TimePartitioningType.DAY, field="report_date")
+        table.clustering_fields = ["account_id", "campaign_id"]
+        client.create_table(table)
+        log.info("테이블 생성: %s", table_id)
     log.info("테이블 준비 완료: %s", table_id)
     return table_id
 
