@@ -23,6 +23,9 @@ import json
 import time
 import logging
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")  # 데이터 기준 시간대(한국)
 
 import requests
 from google.cloud import bigquery
@@ -319,7 +322,7 @@ def _collect_rows(since_s, until_s):
 
 
 def run_daily(client, table_id):
-    until = date.today()
+    until = datetime.now(KST).date()   # 한국시간 기준 '오늘'
     since = until - timedelta(days=LOOKBACK_DAYS - 1)
     rows = _collect_rows(since.isoformat(), until.isoformat())
     load_by_partition(client, table_id, rows)
