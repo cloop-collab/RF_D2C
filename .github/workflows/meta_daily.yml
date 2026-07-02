@@ -2,7 +2,10 @@ name: Meta to BigQuery Daily
 
 on:
   schedule:
-    - cron: "30 23 * * *"   # 매일 08:30 KST (= 23:30 UTC)
+    # 깃허브 스케줄은 지연/누락이 잦아 여러 시각으로 중복 실행(멱등이라 안전).
+    - cron: "30 23 * * *"   # 08:30 KST (= 23:30 UTC)
+    - cron: "30 1 * * *"    # 10:30 KST (= 01:30 UTC)
+    - cron: "30 3 * * *"    # 12:30 KST (= 03:30 UTC)
   workflow_dispatch:
     inputs:
       backfill_months:
