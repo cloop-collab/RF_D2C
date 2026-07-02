@@ -65,7 +65,7 @@ CLIENT_SECRET = os.environ.get("CAFE24_CLIENT_SECRET", "").strip()
 SEED_REFRESH = os.environ.get("CAFE24_REFRESH_TOKEN", "").strip()
 SEED_ACCESS = os.environ.get("CAFE24_ACCESS_TOKEN", "").strip()
 
-API_VERSION = os.environ.get("CAFE24_API_VERSION", "2024-06-01")
+API_VERSION = os.environ.get("CAFE24_API_VERSION", "").strip()  # 비우면 앱 기본버전 사용
 ANALYTICS_BASE = "https://ca-api.cafe24data.com"
 
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
@@ -231,8 +231,9 @@ def _request(method, url, token_mgr, params=None, max_retries=5):
     last = ""
     for attempt in range(max_retries):
         headers = {"Authorization": f"Bearer {token_mgr.get_access_token()}",
-                   "Content-Type": "application/json",
-                   "X-Cafe24-Api-Version": API_VERSION}
+                   "Content-Type": "application/json"}
+        if API_VERSION:
+            headers["X-Cafe24-Api-Version"] = API_VERSION
         r = requests.request(method, url, params=params, headers=headers, timeout=60)
         if r.status_code == 200:
             return r.json()
