@@ -1,0 +1,33 @@
+name: Daily - 전일자 데이터 적재
+on:
+  schedule:
+    - cron: '0 20 * * *'   # UTC 20:00 = KST 05:00
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: google-ads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: 서비스 계정 키 파일 생성
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > sa.json
+      - name: 파이프라인 실행 (daily)
+        env:
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_USE_PROTO_PLUS: "True"
+          GOOGLE_APPLICATION_CREDENTIALS: sa.json
+          BQ_PROJECT: rf-ads-db-500505
+          BQ_DATASET: google_ads
+        run: python pipeline.py daily
