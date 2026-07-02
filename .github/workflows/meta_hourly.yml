@@ -33,6 +33,7 @@ jobs:
           BQ_DATASET: meta_ads
           BQ_TABLE: rf_meta_ads_d0
           LOOKBACK_DAYS: "1"
+          REPLACE_TABLE: "1"   # 당일만 유지(전체 교체)
         run: python meta_to_bigquery.py
       - name: 키 파일 삭제
         if: always()

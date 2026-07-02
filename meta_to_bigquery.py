@@ -44,6 +44,8 @@ LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 BACKFILL_MONTHS = int(os.environ.get("BACKFILL_MONTHS") or "0")
 # 요청 사이 대기(초): 메타 앱 요청 한도(rate limit) 회피용
 SLEEP_BETWEEN = int(os.environ.get("SLEEP_BETWEEN") or "20")
+# d0(당일 전용): 매 실행마다 테이블 전체를 비우고 당일 데이터만 유지
+REPLACE_TABLE = (os.environ.get("REPLACE_TABLE") or "0") == "1"
 
 BQ_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_DATASET = os.environ.get("BQ_DATASET", "meta_ads")
@@ -338,6 +340,22 @@ def load_by_partition(client, table_id, rows):
         log.info("적재(덮어쓰기) %s: %d행", d, len(drows))
 
 
+def load_replace_table(client, table_id, rows):
+    """테이블 전체를 당일 데이터로 교체(WRITE_TRUNCATE). d0 처럼 '당일만 유지'할 때 사용.
+    파티션/클러스터 설정은 테이블 속성이라 그대로 유지된다."""
+    if not rows:
+        log.info("적재할 행 없음 → 기존 테이블 유지(전체 교체 생략)")
+        return
+    job_config = bigquery.LoadJobConfig(
+        schema=build_schema(),
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,  # 테이블 전체 비우고 새로
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+    )
+    job = client.load_table_from_json(rows, table_id, job_config=job_config)
+    job.result()
+    log.info("전체 교체 완료: %d행 (당일만 유지)", len(rows))
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # 5) 실행 모드
 # ──────────────────────────────────────────────────────────────────────────
@@ -357,7 +375,10 @@ def run_daily(client, table_id):
     until = datetime.now(KST).date()   # 한국시간 기준 '오늘'
     since = until - timedelta(days=LOOKBACK_DAYS - 1)
     rows = _collect_rows(since.isoformat(), until.isoformat())
-    load_by_partition(client, table_id, rows)
+    if REPLACE_TABLE:
+        load_replace_table(client, table_id, rows)   # d0: 당일만 유지 (전체 교체)
+    else:
+        load_by_partition(client, table_id, rows)     # 확정: 날짜 파티션 누적
     log.info("일상 적재 완료: 총 %d행 (%s ~ %s)", len(rows), since, until)
 
 
