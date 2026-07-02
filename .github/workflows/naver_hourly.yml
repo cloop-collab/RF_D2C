@@ -22,6 +22,7 @@ jobs:
       BQ_TABLE: rf_naver_sa_ads_d0
       NAVER_LEVEL: both
       LOOKBACK_DAYS: "1"
+      REPLACE_TABLE: "1"   # 당일만 유지(전체 교체)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

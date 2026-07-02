@@ -26,6 +26,9 @@ import hashlib
 import hmac
 import logging
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
 
 import requests
 from google.cloud import bigquery
@@ -49,6 +52,8 @@ ACCOUNTS = [
 LEVEL = os.environ.get("NAVER_LEVEL", "both").lower()   # both | campaign | keyword
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")
+# d0(당일 전용): 매 실행마다 테이블 전체를 당일 데이터로 교체
+REPLACE_TABLE = (os.environ.get("REPLACE_TABLE") or "0") == "1"
 SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN") or "0.3")
 ID_CHUNK = int(os.environ.get("ID_CHUNK", "100"))
 
@@ -252,6 +257,19 @@ def load_by_partition(client, table_id, rows):
         log.info("loaded(overwrite) %s: %d rows", d, len(drows))
 
 
+def load_replace_table(client, table_id, rows):
+    """테이블 전체를 당일 데이터로 교체(WRITE_TRUNCATE). d0(당일만 유지)용."""
+    if not rows:
+        log.info("no rows to load -> keep existing table")
+        return
+    cfg = bigquery.LoadJobConfig(
+        schema=build_schema(),
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON)
+    client.load_table_from_json(rows, table_id, job_config=cfg).result()
+    log.info("full replace: %d rows (today only)", len(rows))
+
+
 def _chunks(seq, n):
     for i in range(0, len(seq), n):
         yield seq[i:i + n]
@@ -348,13 +366,16 @@ def main():
     client = bigquery.Client(project=BQ_PROJECT, location=BQ_LOCATION)
     table_id = ensure_table(client)
 
-    until = date.today()
+    until = datetime.now(KST).date()   # 한국시간 기준 '오늘'
     span = BACKFILL_DAYS if BACKFILL_DAYS > 0 else LOOKBACK_DAYS
     if BACKFILL_DAYS > 0:
         log.info("백필 모드: 최근 %d일 채우기", BACKFILL_DAYS)
     since = until - timedelta(days=span - 1)
     rows = collect_rows(since.isoformat(), until.isoformat())
-    load_by_partition(client, table_id, rows)
+    if REPLACE_TABLE:
+        load_replace_table(client, table_id, rows)   # d0: 당일만 유지(전체 교체)
+    else:
+        load_by_partition(client, table_id, rows)     # 확정: 날짜 파티션 누적
     log.info("done: %d rows (%s ~ %s) -> %s", len(rows), since, until, table_id)
 
 
