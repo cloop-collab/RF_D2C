@@ -3,7 +3,9 @@ name: Meta to BigQuery Daily
 on:
   schedule:
     # 한국시간(KST) 오전 7시 = UTC 22:00 (KST = UTC+9). 깃허브 cron은 UTC 기준.
-    - cron: "0 22 * * *"    # 07:00 KST
+    - cron: "17 22 * * *"    # 07:17 KST
+    - cron: "42 22 * * *"    # 07:42 KST (누락 대비)
+    - cron: "17 0 * * *"     # 09:17 KST (누락 대비 재시도)
   workflow_dispatch:
     inputs:
       backfill_months:
