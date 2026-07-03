@@ -2,7 +2,9 @@ name: Google Ads to BigQuery Daily
 
 on:
   schedule:
-    - cron: "0 22 * * *"   # 07:00 KST (= 22:00 UTC)
+    - cron: "22 22 * * *"    # 07:22 KST
+    - cron: "47 22 * * *"    # 07:47 KST (누락 대비)
+    - cron: "22 0 * * *"     # 09:22 KST (누락 대비 재시도)
   workflow_dispatch:
     inputs:
       mode:
