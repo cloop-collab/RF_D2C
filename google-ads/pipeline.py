@@ -212,6 +212,22 @@ def main():
     start, end = date_range(mode)
     print(f"=== 모드={mode}  기간={start}~{end} ===")
 
+    # 시크릿에 딸려온 공백/줄바꿈 제거 (gRPC "Invalid metadata" 방지)
+    for _k in (
+        "GOOGLE_ADS_DEVELOPER_TOKEN",
+        "GOOGLE_ADS_CLIENT_ID",
+        "GOOGLE_ADS_CLIENT_SECRET",
+        "GOOGLE_ADS_REFRESH_TOKEN",
+        "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+    ):
+        if os.environ.get(_k):
+            os.environ[_k] = os.environ[_k].strip()
+    # login-customer-id는 숫자만 허용 (하이픈 제거)
+    if os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID"):
+        os.environ["GOOGLE_ADS_LOGIN_CUSTOMER_ID"] = (
+            os.environ["GOOGLE_ADS_LOGIN_CUSTOMER_ID"].replace("-", "")
+        )
+
     mcc_id = os.environ["GOOGLE_ADS_LOGIN_CUSTOMER_ID"]
     client = GoogleAdsClient.load_from_env()
     bq = bigquery.Client(project=PROJECT)
