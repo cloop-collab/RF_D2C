@@ -2,8 +2,8 @@
 Google Ads -> BigQuery 데이터 파이프라인
 MCC(관리자 계정) 아래 모든 광고 계정에서 두 종류의 리포트를 가져와 BigQuery에 적재합니다.
 
-  1) campaign_daily : 모든 캠페인의 일별 x 기기별 성과
-  2) keyword_daily  : 검색광고(GSA)의 키워드별 x 기기별 성과
+  1) rf_gda_ads : 모든 캠페인 일별 x 기기별 (DA) / 당일=rf_gda_ads_d0
+  2) rf_gsa_ads : 검색광고(SA) 키워드별 x 기기별 / 당일=rf_gsa_ads_d0
 
 실행 모드:
   backfill : 최근 365일치 한 번에 적재 (최초 1회)
@@ -123,9 +123,9 @@ def keyword_map(r, cname, now):
 
 
 REPORTS = [
-    {"table": "campaign_daily", "schema": CAMPAIGN_SCHEMA,
+    {"table": "rf_gda_ads", "table_d0": "rf_gda_ads_d0", "schema": CAMPAIGN_SCHEMA,
      "query": campaign_query, "map": campaign_map},
-    {"table": "keyword_daily", "schema": KEYWORD_SCHEMA,
+    {"table": "rf_gsa_ads", "table_d0": "rf_gsa_ads_d0", "schema": KEYWORD_SCHEMA,
      "query": keyword_query, "map": keyword_map},
 ]
 
@@ -196,6 +196,17 @@ def load_rows(bq, table, schema, rows):
     print(f"[{table}] {len(rows)}행 적재 완료")
 
 
+def load_replace(bq, table, schema, rows):
+    """테이블 전체를 당일 데이터로 교체(WRITE_TRUNCATE). d0(당일만 유지)용."""
+    table_id = f"{PROJECT}.{DATASET}.{table}"
+    if not rows:
+        print(f"[{table}] 적재할 데이터 없음 → 기존 유지(전체 교체 생략)")
+        return
+    cfg = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    bq.load_table_from_json(rows, table_id, job_config=cfg).result()
+    print(f"[{table}] 전체 교체 {len(rows)}행 (당일만 유지)")
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RUN_MODE", "daily")
     start, end = date_range(mode)
@@ -205,13 +216,16 @@ def main():
     client = GoogleAdsClient.load_from_env()
     bq = bigquery.Client(project=PROJECT)
 
+    def target(rep):
+        return rep["table_d0"] if mode == "intraday" else rep["table"]
+
     for rep in REPORTS:
-        ensure_table(bq, rep["table"], rep["schema"])
+        ensure_table(bq, target(rep), rep["schema"])
 
     accounts = get_child_accounts(client, mcc_id)
     print(f"연결된 광고 계정 {len(accounts)}개 발견")
 
-    # 리포트별로 모든 계정 데이터를 모은다
+    # 리포트별로 모든 계정 데이터를 모은다 (key=확정 테이블명으로 고정)
     collected = {rep["table"]: [] for rep in REPORTS}
     failed = False
     for cid, cname in accounts:
@@ -219,9 +233,9 @@ def main():
             try:
                 rows = fetch(client, cid, cname, rep, start, end)
                 collected[rep["table"]].extend(rows)
-                print(f"  - {cid} {cname} [{rep['table']}]: {len(rows)}행")
+                print(f"  - {cid} {cname} [{target(rep)}]: {len(rows)}행")
             except Exception as e:
-                print(f"  ! {cid} {cname} [{rep['table']}] 오류: {e}")
+                print(f"  ! {cid} {cname} [{target(rep)}] 오류: {e}")
                 failed = True
 
     if failed and mode != "backfill":
@@ -229,8 +243,13 @@ def main():
         sys.exit(1)
 
     for rep in REPORTS:
-        delete_range(bq, rep["table"], start, end)
-        load_rows(bq, rep["table"], rep["schema"], collected[rep["table"]])
+        tgt = target(rep)
+        rows = collected[rep["table"]]
+        if mode == "intraday":
+            load_replace(bq, tgt, rep["schema"], rows)   # d0: 당일 전체 교체
+        else:
+            delete_range(bq, tgt, start, end)            # 확정: 해당 구간만 교체
+            load_rows(bq, tgt, rep["schema"], rows)
 
     print("=== 완료 ===")
 
