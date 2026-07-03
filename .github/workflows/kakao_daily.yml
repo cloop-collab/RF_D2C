@@ -1,0 +1,47 @@
+name: Kakao Moment to BigQuery Daily
+
+on:
+  schedule:
+    # 한국시간(KST) 기준. 카페24/네이버와 같은 06시대. GitHub 누락 대비 중복(재시도).
+    - cron: "17 21 * * *"   # 06:17 KST
+    - cron: "42 21 * * *"   # 06:42 KST (누락 대비)
+    - cron: "17 23 * * *"   # 08:17 KST (누락 대비 재시도)
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(어제)."
+        required: false
+        default: ""
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: kakao
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_DATASET: kakao_moment
+      BQ_LOCATION: asia-northeast3
+      KAKAO_ACCESS_TOKEN: ${{ secrets.KAKAO_ACCESS_TOKEN }}
+      KAKAO_AD_ACCOUNT_IDS: ${{ secrets.KAKAO_AD_ACCOUNT_IDS }}
+      BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: 서비스 계정 키 파일 생성
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > sa_key.json
+      - name: 파이프라인 실행
+        run: |
+          if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
+            python kakao_to_bigquery.py backfill
+          else
+            python kakao_to_bigquery.py daily
+          fi
