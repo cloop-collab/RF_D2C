@@ -142,9 +142,13 @@ def stats_with_fallback(acct, ids, day):
 # ── 변환 ───────────────────────────────────────────────────────────────────
 def lp_type(media, name):
     name = name or ""
-    if media == "SA" and re.search(r"스토어|스스", name):
+    # SA(검색광고): 쇼핑검색(SSA)·쇼핑브랜드(SBA)·스토어·쇼핑 계열 = 스마트스토어,
+    #              파워링크·브랜드검색 등 그 외 = 자사몰.
+    #   ※ 기존 '스토어|스스'만 봐서 클룹_SSA_* 같은 쇼핑검색 광고비가
+    #     통째로 자사몰로 오분류되던 버그 수정.
+    if media == "SA" and re.search(r"스토어|스스|쇼핑|SSA|SBA", name, re.IGNORECASE):
         return "스마트스토어"
-    if media == "DA" and re.search(r"asd", name):
+    if media == "DA" and re.search(r"asd", name, re.IGNORECASE):
         return "스마트스토어"
     return "자사몰"
 
