@@ -2,7 +2,9 @@ name: Naver SA to BigQuery Daily
 
 on:
   schedule:
-    - cron: "0 21 * * *"   # 매일 06:00 KST (= 21:00 UTC)
+    - cron: "17 21 * * *"    # 06:17 KST
+    - cron: "42 21 * * *"    # 06:42 KST (누락 대비)
+    - cron: "17 23 * * *"    # 08:17 KST (누락 대비 재시도)
   workflow_dispatch:
     inputs:
       backfill_days:
