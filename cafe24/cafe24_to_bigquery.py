@@ -427,7 +427,10 @@ def resolve_shops(token_mgr):
             return out
     except Exception as e:  # noqa: BLE001
         log.warning("쇼핑몰 자동탐색 실패(%s) → 기본값 사용", str(e)[:120])
-    return [{"shop_no": 1, "mall": "cloop"}, {"shop_no": 2, "mall": "sprint"}]
+    # 클룹 계정 멀티샵: 1=클룹메인, 2=클룹유튜브(휴면, cloop에 합침), 4=스프린트
+    return [{"shop_no": 1, "mall": "cloop"},
+            {"shop_no": 2, "mall": "cloop"},
+            {"shop_no": 4, "mall": "sprint"}]
 
 
 # ── 통계 API 수집 ────────────────────────────────────────────────────────────
