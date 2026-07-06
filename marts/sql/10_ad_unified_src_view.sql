@@ -44,7 +44,19 @@ google AS (
   SELECT s.report_date, s.mall, 'google' AS media, CAST(s.campaign_id AS STRING) AS campaign_id,
     n.campaign_name, s.impressions, s.clicks, s.cost, s.conversions, s.conversion_value
   FROM g_stats s LEFT JOIN g_name n USING (campaign_id)
+),
+-- 카카오모먼트: 캠페인 단위(rf_kakao_campaign). 몰=광고계정, 전환은 미수집(NULL).
+kakao AS (
+  SELECT date AS report_date,
+    CASE ad_account_id WHEN '501057' THEN 'cloop' WHEN '800005' THEN 'sprint' ELSE 'unknown' END AS mall,
+    'kakao' AS media, campaign_id, ANY_VALUE(campaign_name) AS campaign_name,
+    SUM(impressions) AS impressions, SUM(clicks) AS clicks, SUM(cost) AS cost,
+    CAST(NULL AS FLOAT64) AS conversions, CAST(NULL AS FLOAT64) AS conversion_value
+  FROM `rf-ads-db-500505.kakao_moment.rf_kakao_campaign`
+  WHERE date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
+  GROUP BY report_date, mall, campaign_id
 )
 SELECT * FROM meta
 UNION ALL SELECT * FROM naver
 UNION ALL SELECT * FROM google
+UNION ALL SELECT * FROM kakao
