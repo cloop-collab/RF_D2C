@@ -1,0 +1,30 @@
+name: Marts Refresh Daily
+
+on:
+  schedule:
+    - cron: "0 23 * * *"   # 매일 08:00 KST (= 23:00 UTC), 매체·카페24 원본 적재 이후
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_LOCATION: asia-northeast3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r marts/requirements.txt
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 마트 갱신 (뷰 → 테이블)
+        run: python marts/refresh_marts.py
+      - if: always()
+        run: rm -f sa_key.json
