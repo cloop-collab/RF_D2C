@@ -32,6 +32,7 @@ jobs:
       CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
       CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
       CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
+      CAFE24_SHOPS: '[{"shop_no":1,"mall":"cloop"},{"shop_no":2,"mall":"cloop"},{"shop_no":4,"mall":"sprint"}]'
       CAFE24_ORDERS_START: "2018-01-01"
       BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
       CAFE24_ORDERS_FULL: ${{ github.event.inputs.orders_full }}
