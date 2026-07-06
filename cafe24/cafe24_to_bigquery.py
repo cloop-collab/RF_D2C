@@ -7,11 +7,22 @@ cafe24_to_bigquery.py
 
 통합 원본 테이블 1벌(몰 구분 `shop_no`/`mall` 컬럼) + 몰별 뷰 자동 생성.
   통계 API (https://ca-api.cafe24data.com) — 일별 집계
-    rf_cafe24_sales_daily     ← /sales/times        (일별 매출·주문)
+    rf_cafe24_sales_daily     ← /sales/times        (시간대별 매출·주문)
     rf_cafe24_product_sales   ← /products/sales      (상품별 판매)
-    rf_cafe24_traffic         ← /visitors/view       (방문자)
+    rf_cafe24_traffic         ← /visitors/view       (방문자: 방문/첫방문/재방문)
     rf_cafe24_traffic_keyword ← /visitpaths/keywords (유입 검색어)
     rf_cafe24_members         ← /members/sales       (회원/비회원 매출)
+    rf_cafe24_cart_action     ← /carts/action        (장바구니 담긴수·담기율)
+    rf_cafe24_product_view    ← /products/view       (상품 조회수)
+    rf_cafe24_visitors_unique ← /visitors/unique     (순방문자)
+    rf_cafe24_visitors_pageview ← /visitors/pageview (페이지뷰)
+    rf_cafe24_visitors_dau    ← /visitors/dailyactive(DAU)
+    rf_cafe24_sales_paymethod ← /sales/paymethods    (결제수단별 매출)
+    rf_cafe24_keyword_detail  ← /visitpaths/keyworddetails (키워드 구매전환)
+    rf_cafe24_referrer_domain ← /visitpaths/domains  (유입 도메인)
+    rf_cafe24_referrer_ad     ← /visitpaths/ads       (광고매체 유입)
+  파생 뷰 (SQL)
+    rf_cafe24_repurchase_daily ← orders 계산 (첫재구매·재구매·재구매율)
   관리 API (https://{mall}.cafe24api.com/api/v2/admin) — 원본 건별
     rf_cafe24_orders          ← /orders (embed=items) 주문 (order_id 보존)
     rf_cafe24_order_items     ← 위 주문의 items       (order_id×product_no)
@@ -83,6 +94,9 @@ BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 # 전체 목록 조회를 막음(개인정보 보호). 회원 데이터는 orders.member_id + 통계 members 로 확보.
 ALL_TABLES = [
     "sales_daily", "product_sales", "traffic", "traffic_keyword", "members",
+    # 2026-07 추가: 장바구니·상품조회·방문자세부·결제수단·유입세부
+    "cart_action", "product_view", "visitors_unique", "visitors_pageview",
+    "visitors_dau", "sales_paymethod", "keyword_detail", "referrer_domain", "referrer_ad",
     "orders", "products",
 ]
 _env_tables = os.environ.get("CAFE24_TABLES", "").strip()
@@ -446,18 +460,57 @@ ANALYTICS_SCHEMA = [
     bigquery.SchemaField("ingested_at", "TIMESTAMP"),
 ]
 
-# 통계 테이블 → (엔드포인트, 응답 배열 키 후보, 대표 dim/val 필드 후보)
+# 통계 테이블 정의 (실제 응답 구조는 2026-07 실측 검증).
+#   path       : 엔드포인트
+#   keys       : 응답에서 레코드 배열이 담긴 키 후보
+#   dim1/dim2  : 세부 차원 필드 후보 (상품/키워드/결제수단 등)
+#   val1/val2  : 대표 수치 필드 후보 (나머지는 raw_json 보존)
+#   per_day    : 응답에 날짜가 없는 '기간 집계형'은 True → 하루씩 호출해 일자별로 정확히 적재
 ANALYTICS_SPEC = {
-    "sales_daily":    ("/sales/times",        ["times", "sales", "data", "count"],
-                       [], ["order_amount", "buy_amount", "sales_amount"], ["order_count", "buy_count"]),
-    "product_sales":  ("/products/sales",     ["products", "sales", "data", "count"],
-                       ["product_no", "product_name"], ["sales_amount", "buy_amount"], ["sales_count", "buy_count"]),
-    "traffic":        ("/visitors/view",      ["visitors", "view", "data", "count"],
-                       [], ["visit_count", "unique_visitors"], ["first_visit_count", "re_visit_count"]),
-    "traffic_keyword": ("/visitpaths/keywords", ["keywords", "data", "count"],
-                        ["keyword"], ["visit_count"], ["order_count"]),
-    "members":        ("/members/sales",      ["members", "sales", "data", "count"],
-                       [], ["member_order_amount", "member_buy_amount"], ["nonmember_order_amount", "nonmember_buy_amount"]),
+    # ── 기존 5종 (동작 유지) ──
+    "sales_daily":     dict(path="/sales/times", keys=["times", "sales", "data"],
+                            dim1=["hour"], dim2=[], val1=["order_amount"],
+                            val2=["order_count", "buyers_count"], per_day=False),
+    "product_sales":   dict(path="/products/sales", keys=["sales", "products", "data"],
+                            dim1=["product_no"], dim2=["product_name"], val1=["order_amount"],
+                            val2=["order_count", "order_product_count"], per_day=False),
+    "traffic":         dict(path="/visitors/view", keys=["view", "visitors", "data"],
+                            dim1=[], dim2=[], val1=["visit_count"],
+                            val2=["re_visit_count", "first_visit_count"], per_day=False),
+    "traffic_keyword": dict(path="/visitpaths/keywords", keys=["keywords", "data"],
+                            dim1=["keyword"], dim2=[], val1=["visit_count"],
+                            val2=["order_count"], per_day=False),
+    "members":         dict(path="/members/sales", keys=["sales", "members", "data"],
+                            dim1=[], dim2=[], val1=["member_order_amount"],
+                            val2=["nonmember_order_amount"], per_day=False),
+    # ── 2026-07 신규 추가 ──
+    "cart_action":     dict(path="/carts/action", keys=["action"],
+                            dim1=["product_no"], dim2=["product_name"], val1=["add_cart_count"],
+                            val2=["count"], per_day=True),        # 장바구니 담긴수/노출수
+    "product_view":    dict(path="/products/view", keys=["view"],
+                            dim1=["product_no"], dim2=["product_name"], val1=["count"],
+                            val2=[], per_day=True),               # 상품 조회수
+    "visitors_unique": dict(path="/visitors/unique", keys=["unique"],
+                            dim1=[], dim2=[], val1=["unique_visit_count"],
+                            val2=[], per_day=False),              # 순방문자(일자 있음)
+    "visitors_pageview": dict(path="/visitors/pageview", keys=["pageview"],
+                            dim1=[], dim2=[], val1=["page_view"],
+                            val2=[], per_day=False),              # 페이지뷰(일자 있음)
+    "visitors_dau":    dict(path="/visitors/dailyactive", keys=["dailyactive"],
+                            dim1=[], dim2=[], val1=["user_count"],
+                            val2=[], per_day=False),              # DAU(일자 있음)
+    "sales_paymethod": dict(path="/sales/paymethods", keys=["paymethods"],
+                            dim1=["payment_method"], dim2=[], val1=["order_amount"],
+                            val2=["order_count"], per_day=True),  # 결제수단별 매출
+    "keyword_detail":  dict(path="/visitpaths/keyworddetails", keys=["keyworddetails"],
+                            dim1=["keyword"], dim2=["engine"], val1=["order_amount"],
+                            val2=["purchase_count", "visit_count"], per_day=True),  # 키워드 구매전환
+    "referrer_domain": dict(path="/visitpaths/domains", keys=["domains"],
+                            dim1=["domain"], dim2=[], val1=["visit_count"],
+                            val2=[], per_day=True),               # 유입 도메인
+    "referrer_ad":     dict(path="/visitpaths/ads", keys=["ads"],
+                            dim1=["ad"], dim2=[], val1=["visit_count"],
+                            val2=[], per_day=True),               # 광고매체 유입
 }
 
 
@@ -478,31 +531,43 @@ def _extract_list(data, key_candidates):
 
 
 def collect_analytics(name, token_mgr, shops, since_s, until_s):
-    path, keys, dims, val1_keys, val2_keys = ANALYTICS_SPEC[name]
+    spec = ANALYTICS_SPEC[name]
+    path, keys = spec["path"], spec["keys"]
+    dim1k, dim2k = spec["dim1"], spec["dim2"]
+    v1k, v2k = spec["val1"], spec["val2"]
+    per_day = spec.get("per_day", False)
+    # per_day=True(일자 없는 집계형)는 하루씩 호출해 일자별로 정확히 적재.
+    # per_day=False(일자 포함 or 기존 동작)는 전체 구간 1회 호출.
+    if per_day:
+        windows = [(d, d, d) for d in date_range(since_s, until_s)]
+    else:
+        windows = [(since_s, until_s, None)]
     rows = []
     for s in shops:
-        params = {"mall_id": MALL_ID, "shop_no": s["shop_no"],
-                  "start_date": since_s, "end_date": until_s}
-        try:
-            data = analytics_get(path, token_mgr, params=params)
-        except RuntimeError as e:
-            log.warning("[%s/%s] 통계 조회 실패: %s", name, s["mall"], str(e)[:150])
-            continue
-        for rec in _extract_list(data, keys):
-            if not isinstance(rec, dict):
+        for w_since, w_until, stamp in windows:
+            params = {"mall_id": MALL_ID, "shop_no": s["shop_no"],
+                      "start_date": w_since, "end_date": w_until}
+            try:
+                data = analytics_get(path, token_mgr, params=params)
+            except RuntimeError as e:
+                log.warning("[%s/%s %s] 통계 조회 실패: %s", name, s["mall"],
+                            w_since, str(e)[:150])
                 continue
-            d = _s(rec, "date", "report_date", "std_date") or until_s
-            d = d[:10]
-            rows.append({
-                "report_date": d, "shop_no": s["shop_no"], "mall": s["mall"],
-                "dim1": _s(rec, *dims) if dims else None,
-                "dim2": _s(rec, "product_name") if name == "product_sales" else None,
-                "val1": _f(rec, *val1_keys),
-                "val2": _f(rec, *val2_keys),
-                "raw_json": json.dumps(rec, ensure_ascii=False),
-                "ingested_at": now_utc_iso(),
-            })
-        time.sleep(SLEEP_BETWEEN)
+            for rec in _extract_list(data, keys):
+                if not isinstance(rec, dict):
+                    continue
+                d = stamp or (_s(rec, "date", "report_date", "std_date") or until_s)
+                d = d[:10]
+                rows.append({
+                    "report_date": d, "shop_no": s["shop_no"], "mall": s["mall"],
+                    "dim1": _s(rec, *dim1k) if dim1k else None,
+                    "dim2": _s(rec, *dim2k) if dim2k else None,
+                    "val1": _f(rec, *v1k) if v1k else None,
+                    "val2": _f(rec, *v2k) if v2k else None,
+                    "raw_json": json.dumps(rec, ensure_ascii=False),
+                    "ingested_at": now_utc_iso(),
+                })
+            time.sleep(SLEEP_BETWEEN)
     return rows
 
 
@@ -659,7 +724,7 @@ def collect_customers(token_mgr, shops):
 
 # ── 오케스트레이션 ───────────────────────────────────────────────────────────
 def run_analytics(client, token_mgr, shops, since_s, until_s):
-    for name in ["sales_daily", "product_sales", "traffic", "traffic_keyword", "members"]:
+    for name in ANALYTICS_SPEC:
         if name not in TABLES:
             continue
         try:
@@ -741,8 +806,7 @@ def main():
 
     failures = []
     sections = []
-    if any(t in TABLES for t in
-           ["sales_daily", "product_sales", "traffic", "traffic_keyword", "members"]):
+    if any(t in TABLES for t in ANALYTICS_SPEC):
         sections.append(("analytics", lambda: run_analytics(client, token_mgr, shops, since_s, until_s)))
     if "orders" in TABLES:
         sections.append(("orders", lambda: run_orders(client, token_mgr, shops, orders_since, until_s)))

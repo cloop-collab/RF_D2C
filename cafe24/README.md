@@ -12,13 +12,34 @@
 | 통계 | `rf_cafe24_traffic` / `_d0` | `/visitors/view` |
 | 통계 | `rf_cafe24_traffic_keyword` / `_d0` | `/visitpaths/keywords` |
 | 통계 | `rf_cafe24_members` / `_d0` | `/members/sales` |
+| 통계 | `rf_cafe24_cart_action` / `_d0` | `/carts/action` (장바구니 담긴수·담기율) |
+| 통계 | `rf_cafe24_product_view` / `_d0` | `/products/view` (상품 조회수) |
+| 통계 | `rf_cafe24_visitors_unique` / `_d0` | `/visitors/unique` (순방문자) |
+| 통계 | `rf_cafe24_visitors_pageview` / `_d0` | `/visitors/pageview` (페이지뷰) |
+| 통계 | `rf_cafe24_visitors_dau` / `_d0` | `/visitors/dailyactive` (DAU) |
+| 통계 | `rf_cafe24_sales_paymethod` / `_d0` | `/sales/paymethods` (결제수단별 매출) |
+| 통계 | `rf_cafe24_keyword_detail` / `_d0` | `/visitpaths/keyworddetails` (키워드 구매전환) |
+| 통계 | `rf_cafe24_referrer_domain` / `_d0` | `/visitpaths/domains` (유입 도메인) |
+| 통계 | `rf_cafe24_referrer_ad` / `_d0` | `/visitpaths/ads` (광고매체 유입) |
 | 관리 | `rf_cafe24_orders` / `_d0` | `/orders?embed=items` |
 | 관리 | `rf_cafe24_order_items` / `_d0` | 위 주문의 items |
 | 관리 | `rf_cafe24_products` | `/products` (일 스냅샷) |
-| 관리 | `rf_cafe24_customers` | `/customers` (일 스냅샷) |
+| 파생 | `rf_cafe24_repurchase_daily` (뷰) | orders 계산 (첫재구매·재구매·재구매율) |
 | 내부 | `oauth_state` | OAuth 토큰 저장(access/refresh 회전) |
 
 몰별 뷰: 각 테이블마다 `<table>_cloop`, `<table>_sprint` 자동 생성.
+
+**공통 스키마(통계)**: `report_date, shop_no, mall, dim1, dim2, val1, val2, raw_json, ingested_at`.
+`dim1/dim2`=차원(상품·키워드·결제수단 등), `val1/val2`=대표 수치, 나머지 지표는 `raw_json`에 원본 보존.
+날짜 없는 집계형(`per_day=True`: 장바구니·상품조회·결제수단·유입세부)은 **하루씩 호출**해 일자별로 정확히 적재.
+
+### 재구매 뷰 적용 (1회)
+```bash
+cat cafe24/sql/repurchase_daily_view.sql | bq query --use_legacy_sql=false
+```
+
+### 미수집(권한 필요)
+- **신규회원/가입수**: 카페24 통계 API에 전용 엔드포인트 없음. 관리 API 회원 조회는 앱 스코프(`mall.read_customer`/개인정보) 승인 후 가능 → 승인 시 `/customers`(created_date)로 일별 가입수 산출 추가 예정.
 
 ## GitHub Secrets (필요)
 
