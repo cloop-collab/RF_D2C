@@ -143,7 +143,10 @@ def _refresh(refresh_token):
 
 
 def get_access_token(bq):
-    """refresh 세팅이 있으면 자동갱신, 없으면 정적 KAKAO_ACCESS_TOKEN(하위호환)."""
+    """카카오 비즈니스 토큰은 refresh 토큰이 없음(재발급 방식) → 정적 KAKAO_ACCESS_TOKEN
+    (비즈니스 access token)을 우선 사용. 매일 사용하면 만료되지 않음."""
+    if STATIC_ACCESS:
+        return STATIC_ACCESS
     if REST_API_KEY:
         _ensure_oauth_table(bq)
         state = _read_oauth(bq)
