@@ -32,13 +32,13 @@ g_stats AS (
     SUM(metrics_cost_micros)/1e6 AS cost,
     SUM(metrics_conversions) AS conversions,
     SUM(metrics_conversions_value) AS conversion_value
-  FROM `rf-ads-db-500505.google_ads.p_ads_CampaignBasicStats_3030273599`
+  FROM `rf-ads-db-500505.google_ads_raw.p_ads_CampaignBasicStats_3030273599`
   WHERE segments_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
   GROUP BY report_date, mall, campaign_id
 ),
 g_name AS (
   SELECT campaign_id, ANY_VALUE(campaign_name) AS campaign_name
-  FROM `rf-ads-db-500505.google_ads.p_ads_Campaign_3030273599` GROUP BY campaign_id
+  FROM `rf-ads-db-500505.google_ads_raw.p_ads_Campaign_3030273599` GROUP BY campaign_id
 ),
 google AS (
   SELECT s.report_date, s.mall, 'google' AS media, CAST(s.campaign_id AS STRING) AS campaign_id,
