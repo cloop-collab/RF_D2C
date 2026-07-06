@@ -41,7 +41,7 @@ LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 
 KAKAO_API_BASE = os.environ.get("KAKAO_API_BASE", "https://apis.moment.kakao.com")
 REPORT_PATH = "/openapi/v4/adAccounts/report"
-KAUTH_TOKEN = "https://kauth.kakao.com/oauth/token"
+KAUTH_TOKEN = "https://kauth.kakao.com/oauth/business/token"  # 비즈니스 토큰(카카오모먼트)
 
 # 인증 설정
 REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY", "").strip()

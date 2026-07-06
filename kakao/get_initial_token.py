@@ -26,13 +26,17 @@ import urllib.error
 
 REST_API_KEY = "dfe7c03b6788bc3fb50605a8f79a65e4"   # 앱 736107 REST API 키(client_id)
 REDIRECT_URI = "https://localhost/callback"
-AUTHORIZE = "https://kauth.kakao.com/oauth/authorize"
-TOKEN = "https://kauth.kakao.com/oauth/token"
+# 카카오모먼트는 '비즈니스 인증' 토큰이 필요 (일반 로그인 토큰은 moment API 401)
+AUTHORIZE = "https://kauth.kakao.com/oauth/business/authorize"
+TOKEN = "https://kauth.kakao.com/oauth/business/token"
+SCOPE = "moment_management"        # 카카오모먼트 조회/관리
+RESOURCE_IDS = "moment:*"          # 접근 가능한 모든 광고계정
 
 
 def main():
     auth_url = (f"{AUTHORIZE}?response_type=code&client_id={REST_API_KEY}"
-                f"&redirect_uri={urllib.parse.quote(REDIRECT_URI, safe='')}")
+                f"&redirect_uri={urllib.parse.quote(REDIRECT_URI, safe='')}"
+                f"&scope={SCOPE}&resource_ids={urllib.parse.quote(RESOURCE_IDS, safe='')}")
     print("\n[1] 카카오모먼트 접근 권한 있는 카카오계정으로 로그인된 브라우저에서 아래 URL을 여세요:\n")
     print(auth_url)
     print("\n    (동의 화면이 나오면 모두 동의)")
@@ -46,7 +50,7 @@ def main():
         sys.exit(1)
     code = params["code"][0]
 
-    secret = getpass.getpass("\n[3] Client Secret (앱에서 사용 ON일 때만, 아니면 그냥 Enter): ").strip()
+    secret = getpass.getpass("\n[3] Client Secret 입력 (비즈니스 인증은 필수, 화면에 안 보임): ").strip()
 
     body = {"grant_type": "authorization_code", "client_id": REST_API_KEY,
             "redirect_uri": REDIRECT_URI, "code": code}
