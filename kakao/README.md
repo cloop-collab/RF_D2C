@@ -24,9 +24,14 @@ python kakao_to_bigquery.py backfill   # 최근 N일(BACKFILL_DAYS, 기본 365) 
 ## GitHub Secrets
 | 이름 | 값/설명 |
 |---|---|
-| `KAKAO_ACCESS_TOKEN` | 카카오모먼트 비즈니스 액세스 토큰 |
+| `KAKAO_REST_API_KEY` | 앱 REST API 키(client_id). 예: `dfe7c03b...` |
+| `KAKAO_REFRESH_TOKEN` | 최초 시드용 refresh token (`get_initial_token.py`로 발급). 이후 BQ가 자동 갱신 |
+| `KAKAO_CLIENT_SECRET` | 앱 client_secret (앱에서 '사용 ON'일 때만) |
 | `KAKAO_AD_ACCOUNT_IDS` | 광고계정 ID(콤마): `501057,800005` (클룹 501057 · 스프린트 800005) |
 | `GCP_SA_KEY` | (기존) BigQuery 쓰기용 서비스계정 |
+
+> 인증(2026-07 보완): 정적 `KAKAO_ACCESS_TOKEN`은 ~6시간이면 만료되므로 **refresh token 자동갱신**으로 전환.
+> 토큰 상태는 `kakao_moment.oauth_state`에 저장. 최초 refresh token은 `python get_initial_token.py`로 발급.
 
 ## API (확정)
 - 문서: https://developers.kakao.com/docs/ko/kakaomoment/report

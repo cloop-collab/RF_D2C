@@ -25,6 +25,9 @@ jobs:
       BQ_PROJECT: rf-ads-db-500505
       BQ_DATASET: kakao_moment
       BQ_LOCATION: asia-northeast3
+      KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+      KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+      KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
       KAKAO_ACCESS_TOKEN: ${{ secrets.KAKAO_ACCESS_TOKEN }}
       KAKAO_AD_ACCOUNT_IDS: ${{ secrets.KAKAO_AD_ACCOUNT_IDS }}
       BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
