@@ -12,6 +12,11 @@ Kakao Moment -> BigQuery 데이터 파이프라인
   backfill : 최근 N일치(BACKFILL_DAYS, 기본 365) — API 31일 제한이라 자동 분할 호출
   daily    : 어제 하루치 (매일 새벽)
 
+인증(2026-07 보완): 카카오 토큰은 ~6시간이면 만료되므로 **refresh token 자동갱신** 사용.
+  - KAKAO_REST_API_KEY(client_id) + KAKAO_REFRESH_TOKEN(시드) → 매 실행 시 access token 발급.
+  - access/refresh 를 BigQuery kakao_moment.oauth_state 에 저장(회전 대응, 카페24와 동일).
+  - (하위호환) refresh 세팅이 없고 KAKAO_ACCESS_TOKEN 만 있으면 그 정적 토큰을 사용.
+
 사용법:  python kakao_to_bigquery.py [backfill|daily]
 설정은 모두 환경변수(GitHub Secrets)에서 읽습니다.
 
@@ -32,12 +37,21 @@ from google.cloud.exceptions import NotFound
 
 PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 DATASET = os.environ.get("BQ_DATASET", "kakao_moment")
+LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 
 KAKAO_API_BASE = os.environ.get("KAKAO_API_BASE", "https://apis.moment.kakao.com")
 REPORT_PATH = "/openapi/v4/adAccounts/report"
+KAUTH_TOKEN = "https://kauth.kakao.com/oauth/token"
+
+# 인증 설정
+REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY", "").strip()
+CLIENT_SECRET = os.environ.get("KAKAO_CLIENT_SECRET", "").strip()
+SEED_REFRESH = os.environ.get("KAKAO_REFRESH_TOKEN", "").strip()
+STATIC_ACCESS = os.environ.get("KAKAO_ACCESS_TOKEN", "").strip()  # 하위호환
 
 TB_DA = "rf_kakao_moment"    # 디스플레이(DA)
 TB_MSG = "rf_kakao_message"  # 메시지(CRM)
+OAUTH_TABLE = "oauth_state"
 
 SF = bigquery.SchemaField
 
@@ -64,6 +78,97 @@ MESSAGE_SCHEMA = [
     SF("cost", "FLOAT"),
     SF("loaded_at", "TIMESTAMP"),
 ]
+
+# ---------------- OAuth (refresh token 자동갱신, BQ 저장) ----------------
+
+def _oauth_table_id():
+    return f"{PROJECT}.{DATASET}.{OAUTH_TABLE}"
+
+
+def ensure_dataset(bq):
+    ds = bigquery.Dataset(f"{PROJECT}.{DATASET}")
+    ds.location = LOCATION
+    bq.create_dataset(ds, exists_ok=True)
+
+
+def _ensure_oauth_table(bq):
+    schema = [
+        SF("app_key", "STRING"), SF("access_token", "STRING"),
+        SF("refresh_token", "STRING"), SF("access_expires_at", "TIMESTAMP"),
+        SF("updated_at", "TIMESTAMP"),
+    ]
+    try:
+        bq.get_table(_oauth_table_id())
+    except NotFound:
+        bq.create_table(bigquery.Table(_oauth_table_id(), schema=schema))
+        print(f"[oauth] {OAUTH_TABLE} 테이블 생성")
+
+
+def _read_oauth(bq):
+    q = (f"SELECT access_token, refresh_token, access_expires_at "
+         f"FROM `{_oauth_table_id()}` WHERE app_key=@k ORDER BY updated_at DESC LIMIT 1")
+    job = bq.query(q, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("k", "STRING", REST_API_KEY)]))
+    for r in job.result():
+        return dict(access_token=r["access_token"], refresh_token=r["refresh_token"],
+                    access_expires_at=r["access_expires_at"])
+    return None
+
+
+def _write_oauth(bq, access, refresh, access_exp):
+    row = {"app_key": REST_API_KEY, "access_token": access, "refresh_token": refresh,
+           "access_expires_at": access_exp.isoformat(),
+           "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    cfg = bigquery.LoadJobConfig(
+        write_disposition="WRITE_TRUNCATE",
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        schema=[
+            SF("app_key", "STRING"), SF("access_token", "STRING"),
+            SF("refresh_token", "STRING"), SF("access_expires_at", "TIMESTAMP"),
+            SF("updated_at", "TIMESTAMP"),
+        ])
+    bq.load_table_from_json([row], _oauth_table_id(), job_config=cfg).result()
+
+
+def _refresh(refresh_token):
+    data = {"grant_type": "refresh_token", "client_id": REST_API_KEY,
+            "refresh_token": refresh_token}
+    if CLIENT_SECRET:
+        data["client_secret"] = CLIENT_SECRET
+    r = requests.post(KAUTH_TOKEN, data=data, timeout=30,
+                      headers={"Content-Type": "application/x-www-form-urlencoded"})
+    if r.status_code != 200:
+        raise RuntimeError(f"카카오 토큰 갱신 실패 HTTP {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+def get_access_token(bq):
+    """refresh 세팅이 있으면 자동갱신, 없으면 정적 KAKAO_ACCESS_TOKEN(하위호환)."""
+    if REST_API_KEY:
+        _ensure_oauth_table(bq)
+        state = _read_oauth(bq)
+        if not state or not state.get("refresh_token"):
+            if not SEED_REFRESH:
+                if STATIC_ACCESS:
+                    print("[oauth] refresh 없음 → 정적 KAKAO_ACCESS_TOKEN 사용(만료 주의)")
+                    return STATIC_ACCESS
+                raise RuntimeError("KAKAO_REFRESH_TOKEN 시드 또는 KAKAO_ACCESS_TOKEN 필요")
+            state = {"access_token": None, "refresh_token": SEED_REFRESH,
+                     "access_expires_at": None}
+        access, exp = state.get("access_token"), state.get("access_expires_at")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if (not access) or (not exp) or now + datetime.timedelta(seconds=300) >= exp:
+            tok = _refresh(state["refresh_token"])
+            access = tok["access_token"]
+            refresh = tok.get("refresh_token", state["refresh_token"])
+            exp = now + datetime.timedelta(seconds=int(tok.get("expires_in", 21599)))
+            _write_oauth(bq, access, refresh, exp)
+            print(f"[oauth] access token 갱신·저장 (만료 {exp.isoformat()})")
+        return access
+    if STATIC_ACCESS:
+        return STATIC_ACCESS
+    raise RuntimeError("KAKAO_REST_API_KEY(+REFRESH_TOKEN) 또는 KAKAO_ACCESS_TOKEN 필요")
+
 
 # ---------------- 공통 함수 ----------------
 
@@ -173,10 +278,11 @@ def main():
     start, end = date_range(mode)
     print(f"=== 모드={mode}  기간={start}~{end} ===")
 
-    access_token = _clean(os.environ["KAKAO_ACCESS_TOKEN"])
     account_ids = [a.strip() for a in os.environ["KAKAO_AD_ACCOUNT_IDS"].split(",") if a.strip()]
 
-    bq = bigquery.Client(project=PROJECT)
+    bq = bigquery.Client(project=PROJECT, location=LOCATION)
+    ensure_dataset(bq)
+    access_token = get_access_token(bq)   # refresh 자동갱신(또는 정적 하위호환)
     ensure_table(bq, TB_DA, DA_SCHEMA)
     ensure_table(bq, TB_MSG, MESSAGE_SCHEMA)
 
