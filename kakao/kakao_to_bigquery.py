@@ -29,6 +29,7 @@ API 문서: https://developers.kakao.com/docs/ko/kakaomoment/report
 """
 import os
 import sys
+import time
 import datetime
 import zoneinfo
 import requests
@@ -231,9 +232,20 @@ def fetch_report(access_token, account_id, start, end):
         "dimension": "CREATIVE_FORMAT",
         "timeUnit": "DAY",
     }
-    resp = requests.get(KAKAO_API_BASE + REPORT_PATH, headers=headers, params=params, timeout=60)
-    resp.raise_for_status()
-    payload = resp.json()
+    # 카카오모먼트 다건 조회는 앱당 5초에 1회 제한 → 429 시 대기 후 재시도
+    payload = None
+    for attempt in range(6):
+        resp = requests.get(KAKAO_API_BASE + REPORT_PATH, headers=headers, params=params, timeout=60)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            wait = 6 + attempt * 2
+            print(f"[rate-limit/{resp.status_code}] {wait}s 대기 후 재시도 ({attempt+1}/6)")
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        payload = resp.json()
+        break
+    if payload is None:
+        resp.raise_for_status()
 
     rows = []
     for item in payload.get("data", []):
@@ -295,6 +307,7 @@ def main():
     for acc in account_ids:
         for c_start, c_end in date_chunks(start, end):
             print(f"[계정 {acc}] 리포트 수집 {c_start}~{c_end}")
+            time.sleep(6)  # 카카오모먼트 앱당 5초 1회 제한 준수
             for r in fetch_report(access_token, acc, c_start, c_end):
                 ad_type = classify(r["creative_format"])
                 base = {
