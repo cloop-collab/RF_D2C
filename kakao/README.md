@@ -3,14 +3,18 @@
 카카오모먼트 광고계정의 **일자별 성과**를 BigQuery에 적재합니다. (타 매체와 네이밍·구조 통일)
 
 ## 테이블 (데이터셋 `kakao_moment`)
-| 테이블 | 내용 | 구분 기준 |
+| 테이블 | 단위 | 내용 |
 |---|---|---|
-| `rf_kakao_moment` | 디스플레이(비즈보드, DA) — 노출·클릭·비용 | `creative_format` 에 `image` 포함 |
-| `rf_kakao_message` | 메시지(CRM) — **비용만** | `creative_format` 에 `message` 포함 |
+| `rf_kakao_campaign` | **캠페인** | campaign_id/name · 노출·클릭·비용 (타 매체와 통일, 통합 마트가 사용) |
+| `rf_kakao_adgroup` | **광고그룹** | adgroup_id/name(+campaign_id) · 노출·클릭·비용 |
+| `rf_kakao_moment` | 소재형식(DA) | `creative_format` 에 `image` 포함 — 노출·클릭·비용 |
+| `rf_kakao_message` | 소재형식(메시지) | `creative_format` 에 `message` 포함 — **비용만** |
 
-- 수집 단위: **광고계정 × 소재형식(creative_format) × 일자** (계정 리포트 + `dimension=CREATIVE_FORMAT`).
-- 각 행에 원본 `creative_format` + 파생 `ad_type`(`DISPLAY`/`MESSAGE`/`OTHER`).
-- **비용 일자별 트래킹**: DA는 `rf_kakao_moment`, 메시지 비용은 `rf_kakao_message` — 물리 분리라 혼입 없음(제외 조건 불필요).
+- 수집 방식:
+  - 캠페인: 계정 리포트 `level=CAMPAIGN` + **캠페인 목록 API**(`/campaigns`)로 이름 매핑.
+  - 광고그룹: 캠페인별 **광고그룹 목록 API**(`/adGroups`)로 ID 수집 → `adGroups/report`(ID 최대 40개 배치).
+  - 소재형식: 계정 리포트 `dimension=CREATIVE_FORMAT`, 파생 `ad_type`(`DISPLAY`/`MESSAGE`/`OTHER`).
+- **레이트리밋**: 다건 조회는 앱당 5초 1회 → 리포트 호출 전 6초 대기, 목록은 1.5초, 429/5xx 재시도.
 - 프로젝트 `rf-ads-db-500505` / 위치 `asia-northeast3`, 날짜 **KST 기준**, 로드 잡(멱등: 기간 삭제 후 적재).
 
 ## 실행
