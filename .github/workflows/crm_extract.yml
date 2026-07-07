@@ -1,40 +1,57 @@
 name: CRM 발송대상 추출 (온디맨드)
 
-# 개인정보는 BigQuery/코드에 저장하지 않고, 발송리스트 CSV 아티팩트로만 출력합니다.
-# 아티팩트는 1일 후 자동 삭제. 발송은 기존 CRM/메시지 툴에서 진행하세요.
+# 개인정보는 BigQuery/코드에 저장하지 않고, 발송리스트 CSV 아티팩트로만 출력(1일 후 자동삭제).
+# 회원=고급조건 전부 / 비회원(게스트)=주문 단위 모수(수신동의 미확인 → 발송 전 동의 확보 필요).
+# ※ mall(기본 all)·min_spend 등은 필요 시 로컬 실행(crm/README.md) 또는 스크립트 env 로.
 
 on:
   workflow_dispatch:
     inputs:
-      product_no:
-        description: "상품번호(콤마). 예: 472,401  (키워드와 함께 주면 둘 중 하나라도 매칭)"
-        required: false
-        default: ""
       product_kw:
-        description: "상품명 키워드(부분일치). 예: 애사비"
+        description: "대상상품 상품명 키워드(부분일치). 예: 애사비"
         required: false
         default: ""
+      product_no:
+        description: "대상상품 상품번호(콤마). 예: 472,401  (키워드와 함께 시 둘 중 하나)"
+        required: false
+        default: ""
+      option_include:
+        description: "이 옵션만 포함(옵션값 부분일치). 예: 혼합 12개입"
+        required: false
+        default: ""
+      option_exclude:
+        description: "이 옵션 제외(옵션값 부분일치). 예: 단품"
+        required: false
+        default: ""
+      exclude_product_kw:
+        description: "이 상품을 산 회원은 제외(상품명 키워드, 회원만). 예: 화이바"
+        required: false
+        default: ""
+      coupon:
+        description: "쿠폰: any | used(사용) | notused(미사용)"
+        required: false
+        default: "any"
+      min_orders:
+        description: "기간 내 대상상품 최소 주문수(회원, 재구매 타겟). 기본 1"
+        required: false
+        default: "1"
       days:
         description: "최근 N일 내 구매 (기본 30)"
         required: false
         default: "30"
-      mall:
-        description: "cloop | sprint | all (기본 all)"
+      include_guest:
+        description: "비회원(게스트) 포함: 1=포함 (수신동의 미확인, 모수용)"
         required: false
-        default: "all"
-      min_orders:
-        description: "기간 내 최소 주문수 (기본 1)"
-        required: false
-        default: "1"
+        default: ""
       channel:
-        description: "수신동의 필터: sms | email | all (기본 all)"
+        description: "회원 수신동의 필터: sms | email | all (기본 all)"
         required: false
         default: "all"
 
 jobs:
   extract:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
       BQ_PROJECT: rf-ads-db-500505
@@ -43,11 +60,15 @@ jobs:
       CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
       CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
       CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
-      CRM_PRODUCT_NO: ${{ github.event.inputs.product_no }}
       CRM_PRODUCT_KW: ${{ github.event.inputs.product_kw }}
-      CRM_DAYS: ${{ github.event.inputs.days }}
-      CRM_MALL: ${{ github.event.inputs.mall }}
+      CRM_PRODUCT_NO: ${{ github.event.inputs.product_no }}
+      CRM_OPTION_INCLUDE: ${{ github.event.inputs.option_include }}
+      CRM_OPTION_EXCLUDE: ${{ github.event.inputs.option_exclude }}
+      CRM_EXCLUDE_PRODUCT_KW: ${{ github.event.inputs.exclude_product_kw }}
+      CRM_COUPON: ${{ github.event.inputs.coupon }}
       CRM_MIN_ORDERS: ${{ github.event.inputs.min_orders }}
+      CRM_DAYS: ${{ github.event.inputs.days }}
+      CRM_INCLUDE_GUEST: ${{ github.event.inputs.include_guest }}
       CRM_CHANNEL: ${{ github.event.inputs.channel }}
       CRM_OUT: send_list.csv
     steps:
