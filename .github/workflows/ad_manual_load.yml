@@ -1,0 +1,36 @@
+name: 광고 어드민 RAW 적재 (mart.ad_manual)
+
+# marts/manual_ad_data/*.csv (어드민 다운로드 정리본)를 mart.ad_manual 에 MERGE 적재.
+# CSV 파일을 폴더에 커밋하면 자동 실행되고, 수동 실행도 가능.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "marts/manual_ad_data/*.csv"
+  workflow_dispatch:
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_LOCATION: asia-northeast3
+      AD_MANUAL_DIR: marts/manual_ad_data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install google-cloud-bigquery
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재(MERGE)
+        run: python marts/load_ad_manual.py
+      - if: always()
+        run: rm -f sa_key.json
