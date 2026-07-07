@@ -12,6 +12,7 @@ CRM 발송대상 추출 (온디맨드) — 개인정보는 저장하지 않고 C
        - 게스트: /orders embed=receivers (수령자 이름·휴대폰)  ※수신동의 플래그 없음
   3) 회원 → 알림톡(정보성, 수신동의 무관, 기본 무필터) / 비회원 → LMS(광고성, 수신동의 별도확보 필수)
      ※주문에 수신동의 정보가 없어 비회원은 발송 전 외부 옵트인 목록으로 대조 필요.
+  * 수신거부(cafe24.blocklist) 휴대폰은 회원·비회원 공통 제외(suppression)
   4) send_list CSV 출력 (BQ/코드에 PII 미저장)
 
 조건(환경변수):
@@ -249,9 +250,26 @@ def member_consented(c):
     return sms or mail
 
 
+def _digits(p):
+    return "".join(ch for ch in (p or "") if ch.isdigit())
+
+
+def load_blocklist(bq):
+    """수신거부 번호(phone_digits) 집합. 없거나 실패 시 빈 집합(제외 없이 진행)."""
+    try:
+        rows = bq.query(
+            f"SELECT phone_digits FROM `{PROJECT}.{DATASET}.blocklist` "
+            f"WHERE phone_digits IS NOT NULL AND phone_digits != ''").result()
+        return {r["phone_digits"] for r in rows}
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] blocklist 로드 실패({str(e)[:80]}) → 수신거부 제외 없이 진행")
+        return set()
+
+
 def main():
     bq = bigquery.Client(project=PROJECT, location=LOCATION)
     token = get_access_token(bq)
+    blocklist = load_blocklist(bq)  # 수신거부 제외(회원·비회원 공통)
     sql, params = build_query()
     seg = [dict(r) for r in bq.query(
         sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()]
@@ -261,7 +279,7 @@ def main():
     if len(seg) > 5000:
         print(f"[warn] 대상 {len(seg)} — 건당 1콜이라 {int(len(seg)*SLEEP/60)}분+ 소요. 조건을 좁히세요.")
 
-    rows, skip_consent, no_contact = [], 0, 0
+    rows, skip_consent, no_contact, blocked = [], 0, 0, 0
     for i, s in enumerate(seg, 1):
         if s["customer_type"] == "member":
             c = fetch_member_contact(token, s["shop_no"], s["ref"])
@@ -270,6 +288,9 @@ def main():
         time.sleep(SLEEP)
         if not c or not (c["cellphone"] or c["email"]):
             no_contact += 1
+            continue
+        if _digits(c["cellphone"]) in blocklist:   # 수신거부 번호 제외(회원·비회원 공통)
+            blocked += 1
             continue
         is_member = s["customer_type"] == "member"
         # 회원=알림톡(동의무관) → 기본 무필터. 광고성(MEMBER_CONSENT=1)일 때만 동의 필터.
@@ -299,7 +320,7 @@ def main():
         w.writeheader()
         w.writerows(rows)
     print(f"완료: 발송대상 {len(rows)} → {OUT}  "
-          f"(회원 동의필터 제외 {skip_consent}, 연락처없음 {no_contact})")
+          f"(수신거부 제외 {blocked}, 회원 동의필터 제외 {skip_consent}, 연락처없음 {no_contact})")
     print("· 회원 → 알림톡(정보성): 수신동의 무관"
           + (" (CRM_MEMBER_CONSENT=1 → 동의필터 적용됨)" if MEMBER_CONSENT else " (무필터)"))
     if INCLUDE_GUEST and n_gst:
