@@ -1,10 +1,10 @@
-name: CRM 발송대상 추출 (온디맨드)
+name: 고객 발송대상 추출 (온디맨드)
 
 # 개인정보는 BigQuery/코드에 저장하지 않고, 발송리스트 CSV 아티팩트로만 출력(1일 후 자동삭제).
 # 발송채널·동의 규칙:
 #   · 회원 → 알림톡(정보성): 수신동의 무관 → 무필터 추출 (광고성 발송 시에만 로컬에서 CRM_MEMBER_CONSENT=1)
 #   · 비회원 → LMS(광고성): 수신동의 필수인데 주문에 동의정보 없음 → 모수만 추출, 발송 전 외부 옵트인 대조 필수
-# ※ mall(기본 all)·min_spend 등은 필요 시 로컬 실행(crm/README.md) 또는 스크립트 env 로.
+# ※ mall(기본 all)·min_spend 등은 필요 시 로컬 실행(customer/README.md) 또는 스크립트 env 로.
 
 on:
   workflow_dispatch:
@@ -80,7 +80,7 @@ jobs:
           ${{ secrets.GCP_SA_KEY }}
           KEY
       - name: 발송대상 추출
-        run: python crm/crm_extract.py
+        run: python customer/customer_extract.py
       - if: always()
         run: rm -f sa_key.json
       - name: 발송리스트 업로드(1일 보관)

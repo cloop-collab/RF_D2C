@@ -1,4 +1,7 @@
-# CRM 발송대상 추출 (온디맨드)
+# 고객 발송대상 추출 (온디맨드)
+
+> 네이밍: 이 폴더(`customer/`)는 **고객정보 기반 발송대상 추출·수신거부** 도구입니다.
+> 향후 **실제 발송 성과**(알림톡 성과·카카오메시지 성과 등)는 별도 `crm/`(CRM 성과)로 다룹니다.
 
 주문 행동으로 대상을 뽑고 → 연락처를 그때그때 조회해 **발송리스트(CSV)**를 만듭니다.
 **개인정보(이름·연락처)는 BigQuery/코드에 저장하지 않습니다.** 발송은 기존 CRM/메시지 툴에서 진행하세요.
@@ -49,7 +52,7 @@ Actions → **"CRM 발송대상 추출 (온디맨드)"** → Run workflow:
 - **비회원 → LMS(광고성)**: 수신동의 **필수**. 그런데 **주문 데이터에 수신동의 정보가 없음**(주문 72개 필드에 없음). → 도구는 게스트 모수·연락처를 뽑아주되, **발송 전 외부 옵트인 목록(문자플랫폼 등)으로 반드시 대조·필터**해야 합니다. `consent_note`·`send_channel` 컬럼으로 표기됩니다.
 
 ## 수신거부(BLOCKLIST) 제외
-- 수신거부 시트 → `cafe24.blocklist`(`crm/load_blocklist.py`, 매일 06:30 자동갱신, 약 4,900 번호).
+- 수신거부 시트 → `cafe24.blocklist`(`customer/load_blocklist.py`, 매일 06:30 자동갱신, 약 4,900 번호).
 - CRM 추출 시 **휴대폰이 blocklist에 있으면 회원·비회원 공통 제외**(알림톡·LMS 모두). 결과 로그에 `수신거부 제외 N` 표시.
 
 ## 개인정보·컴플라이언스
@@ -59,6 +62,6 @@ Actions → **"CRM 발송대상 추출 (온디맨드)"** → Run workflow:
 
 ## 로컬 실행(선택)
 ```bash
-CRM_PRODUCT_KW="애사비" CRM_DAYS=30 CRM_COUPON=used python crm/crm_extract.py
+CRM_PRODUCT_KW="애사비" CRM_DAYS=30 CRM_COUPON=used python customer/customer_extract.py
 ```
 (BigQuery 접근 위해 gcloud ADC 필요. 개인정보 CSV는 로컬에만 남김.)

@@ -28,6 +28,6 @@ jobs:
           ${{ secrets.GCP_SA_KEY }}
           KEY
       - name: 적재
-        run: python crm/load_blocklist.py
+        run: python customer/load_blocklist.py
       - if: always()
         run: rm -f sa_key.json
