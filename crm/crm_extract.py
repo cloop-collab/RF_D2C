@@ -10,7 +10,8 @@ CRM 발송대상 추출 (온디맨드) — 개인정보는 저장하지 않고 C
   2) 대상만 연락처를 '그때그때' 조회
        - 회원: /customersprivacy (이름·휴대폰·이메일·수신동의)
        - 게스트: /orders embed=receivers (수령자 이름·휴대폰)  ※수신동의 플래그 없음
-  3) 수신동의 필터(회원) / 게스트는 '동의 별도 확보' 표기
+  3) 회원 → 알림톡(정보성, 수신동의 무관, 기본 무필터) / 비회원 → LMS(광고성, 수신동의 별도확보 필수)
+     ※주문에 수신동의 정보가 없어 비회원은 발송 전 외부 옵트인 목록으로 대조 필요.
   4) send_list CSV 출력 (BQ/코드에 PII 미저장)
 
 조건(환경변수):
@@ -22,7 +23,8 @@ CRM 발송대상 추출 (온디맨드) — 개인정보는 저장하지 않고 C
   회원 집계:     CRM_MIN_ORDERS(기간내 최소 A주문수, 기본 1) / CRM_MIN_SPEND(기간내 최소 결제액, 기본 0)
   쿠폰:          CRM_COUPON(any|used|notused, 기본 any)  ※주문상품 coupon_discount_price>0 기준
   비회원 포함:   CRM_INCLUDE_GUEST(1=포함, 기본 0)  ※게스트는 수신동의 미확인 → 발송 전 동의 확보 필요
-  수신동의(회원):CRM_CHANNEL(sms|email|all, 기본 all)
+  회원동의필터: CRM_MEMBER_CONSENT(1=광고성 발송용 동의필터 ON, 기본 OFF=알림톡)
+  동의채널:     CRM_CHANNEL(sms|email|all, MEMBER_CONSENT=1일 때만 적용)
   출력:          CRM_OUT(기본 send_list.csv)
 
 자격증명: cafe24.oauth_state 의 access_token 사용(파이프라인이 갱신). 만료 시 CAFE24_CLIENT_ID/SECRET 로 refresh.
@@ -58,6 +60,8 @@ MIN_SPEND = float(os.environ.get("CRM_MIN_SPEND") or 0)
 COUPON = os.environ.get("CRM_COUPON", "any").strip() or "any"
 INCLUDE_GUEST = os.environ.get("CRM_INCLUDE_GUEST", "").strip() in ("1", "true", "True")
 CHANNEL = os.environ.get("CRM_CHANNEL", "all").strip() or "all"
+# 회원=알림톡(정보성)이라 수신동의 무관 → 기본 무필터. 광고성 발송 시에만 1로 켜서 동의 필터 적용.
+MEMBER_CONSENT = os.environ.get("CRM_MEMBER_CONSENT", "").strip() in ("1", "true", "True")
 OUT = os.environ.get("CRM_OUT", "send_list.csv")
 SLEEP = float(os.environ.get("CRM_SLEEP") or 0.25)
 AGREE = {"T", "Y", "TRUE", "1"}
@@ -267,14 +271,19 @@ def main():
         if not c or not (c["cellphone"] or c["email"]):
             no_contact += 1
             continue
-        if s["customer_type"] == "member" and not member_consented(c):
+        is_member = s["customer_type"] == "member"
+        # 회원=알림톡(동의무관) → 기본 무필터. 광고성(MEMBER_CONSENT=1)일 때만 동의 필터.
+        if is_member and MEMBER_CONSENT and not member_consented(c):
             skip_consent += 1
             continue
         rows.append({
-            "customer_type": s["customer_type"], "mall": s["mall"], "ref": s["ref"],
+            "customer_type": s["customer_type"],
+            "send_channel": "알림톡" if is_member else "LMS",
+            "mall": s["mall"], "ref": s["ref"],
             "name": c["name"], "cellphone": c["cellphone"], "email": c["email"],
             "sms_agree": c["sms"], "email_agree": c["news"],
-            "consent_note": "" if s["customer_type"] == "member" else "게스트-수신동의 별도확보필요",
+            "consent_note": "회원-알림톡(정보성,동의무관)" if is_member
+                            else "비회원-LMS(광고성): 수신동의 별도확보 필수",
             "products": s["products"], "last_order_date": str(s["last_order_date"]),
             "days_since_order": s["days_since"], "order_count": s["order_count"],
             "spend": s["spend"], "used_coupon": s["used_coupon"],
@@ -282,17 +291,20 @@ def main():
         if i % 200 == 0:
             print(f"  ...{i}/{len(seg)} 처리")
 
-    cols = ["customer_type", "mall", "ref", "name", "cellphone", "email", "sms_agree",
-            "email_agree", "consent_note", "products", "last_order_date",
+    cols = ["customer_type", "send_channel", "mall", "ref", "name", "cellphone", "email",
+            "sms_agree", "email_agree", "consent_note", "products", "last_order_date",
             "days_since_order", "order_count", "spend", "used_coupon"]
     with open(OUT, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         w.writerows(rows)
     print(f"완료: 발송대상 {len(rows)} → {OUT}  "
-          f"(회원 수신거부 제외 {skip_consent}, 연락처없음 {no_contact})")
+          f"(회원 동의필터 제외 {skip_consent}, 연락처없음 {no_contact})")
+    print("· 회원 → 알림톡(정보성): 수신동의 무관"
+          + (" (CRM_MEMBER_CONSENT=1 → 동의필터 적용됨)" if MEMBER_CONSENT else " (무필터)"))
     if INCLUDE_GUEST and n_gst:
-        print("⚠️ 게스트는 수신동의 플래그가 없습니다. 발송 전 동의 근거를 반드시 확보하세요.")
+        print("⚠️ 비회원 → LMS(광고성): 주문에 수신동의 정보가 없습니다. "
+              "발송 전 반드시 동의 근거(문자플랫폼 옵트인 목록 등)로 대조·필터하세요.")
 
 
 if __name__ == "__main__":
