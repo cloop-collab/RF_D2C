@@ -658,23 +658,37 @@ def orders_count(token_mgr, shop_no, since, until):
         return None
 
 
+def _to_dt(s, end=False):
+    """'YYYY-MM-DD' 또는 'YYYY-MM-DDTHH:MM:SS' → datetime. date면 하루의 시작/끝."""
+    if len(s) <= 10:
+        d = datetime.fromisoformat(s)
+        return d.replace(hour=23, minute=59, second=59) if end else d
+    return datetime.fromisoformat(s)
+
+
+def _fmt_dt(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def collect_orders_window(token_mgr, s, w_since, w_until):
-    """구간 주문 수집. offset 상한(15000) 회피: 주문수가 상한 이상이면 날짜 구간을
-    재귀 이분할해 각 하위구간이 상한 미만이 되게 함(대량월 잘림·누락 방지)."""
+    """구간 주문 수집. offset 상한(15000) 회피: 주문수가 상한 이상이면 구간을 재귀
+    이분할(날짜→시간 단위까지)해 각 하위구간이 상한 미만이 되게 함. 대량 프로모션
+    일자(하루 3만건 등)도 시간대로 쪼개 완전 수집."""
     cnt = orders_count(token_mgr, s["shop_no"], w_since, w_until)
-    if cnt == 0:
+    if not cnt:
         return [], []
-    if cnt is not None and cnt >= ORDERS_OFFSET_CAP and w_since != w_until:
-        d0, d1 = date.fromisoformat(w_since), date.fromisoformat(w_until)
-        mid = d0 + (d1 - d0) // 2
-        o1, i1 = collect_orders_window(token_mgr, s, w_since, mid.isoformat())
-        o2, i2 = collect_orders_window(
-            token_mgr, s, (mid + timedelta(days=1)).isoformat(), w_until)
-        return o1 + o2, i1 + i2
-    if cnt is not None and cnt >= ORDERS_OFFSET_CAP:  # 단일일이 상한 초과(극히 드묾)
-        log.warning("[orders/%s %s] 하루 주문 %d>=%d — offset 상한으로 일부 누락 가능",
-                    s["mall"], w_since, cnt, ORDERS_OFFSET_CAP)
-    return _paginate_orders(token_mgr, s, w_since, w_until)
+    if cnt < ORDERS_OFFSET_CAP:
+        return _paginate_orders(token_mgr, s, w_since, w_until)
+    a, b = _to_dt(w_since), _to_dt(w_until, end=True)
+    if (b - a).total_seconds() <= 60:   # 1분 이내인데도 상한 초과(극단) → 상한까지만
+        log.warning("[orders/%s %s~%s] 주문 %d>=%d, 1분내 더 분할 불가 — 일부 누락 가능",
+                    s["mall"], w_since, w_until, cnt, ORDERS_OFFSET_CAP)
+        return _paginate_orders(token_mgr, s, w_since, w_until)
+    mid = a + (b - a) / 2
+    o1, i1 = collect_orders_window(token_mgr, s, _fmt_dt(a), _fmt_dt(mid))
+    o2, i2 = collect_orders_window(
+        token_mgr, s, _fmt_dt(mid + timedelta(seconds=1)), _fmt_dt(b))
+    return o1 + o2, i1 + i2
 
 
 def _paginate_orders(token_mgr, s, w_since, w_until):
