@@ -8,6 +8,7 @@ WITH meta AS (
       WHEN account_id = '3342733785912061' THEN 'sprint'
       ELSE 'unknown' END AS mall,
     'meta' AS media, campaign_id, ANY_VALUE(campaign_name) AS campaign_name,
+    CAST(NULL AS STRING) AS landing,
     SUM(impressions) AS impressions, SUM(clicks) AS clicks, SUM(spend) AS cost,
     SUM(web_purchase_count) AS conversions, SUM(web_purchase_value) AS conversion_value
   FROM `rf-ads-db-500505.meta_ads.rf_meta_ads`
@@ -17,6 +18,7 @@ WITH meta AS (
 naver AS (
   SELECT report_date, LOWER(account) AS mall, 'naver' AS media, campaign_id,
     ANY_VALUE(campaign_name) AS campaign_name,
+    ANY_VALUE(lp_type) AS landing,   -- 자사몰 / 스마트스토어 구분
     SUM(impressions) AS impressions, SUM(clicks) AS clicks, SUM(cost) AS cost,
     SUM(conversions) AS conversions, SUM(conversion_value) AS conversion_value
   FROM `rf-ads-db-500505.naver_ads.rf_naver_sa_ads`
@@ -42,7 +44,8 @@ g_name AS (
 ),
 google AS (
   SELECT s.report_date, s.mall, 'google' AS media, CAST(s.campaign_id AS STRING) AS campaign_id,
-    n.campaign_name, s.impressions, s.clicks, s.cost, s.conversions, s.conversion_value
+    n.campaign_name, CAST(NULL AS STRING) AS landing,
+    s.impressions, s.clicks, s.cost, s.conversions, s.conversion_value
   FROM g_stats s LEFT JOIN g_name n USING (campaign_id)
 ),
 -- 카카오모먼트: 캠페인 단위(rf_kakao_campaign). 몰=광고계정, 전환은 미수집(NULL).
@@ -50,6 +53,7 @@ kakao AS (
   SELECT date AS report_date,
     CASE ad_account_id WHEN '501057' THEN 'cloop' WHEN '800005' THEN 'sprint' ELSE 'unknown' END AS mall,
     'kakao' AS media, campaign_id, ANY_VALUE(campaign_name) AS campaign_name,
+    CAST(NULL AS STRING) AS landing,
     SUM(impressions) AS impressions, SUM(clicks) AS clicks, SUM(cost) AS cost,
     CAST(NULL AS FLOAT64) AS conversions, CAST(NULL AS FLOAT64) AS conversion_value
   FROM `rf-ads-db-500505.kakao_moment.rf_kakao_campaign`
@@ -69,6 +73,7 @@ api_dates AS (
 ),
 manual AS (
   SELECT m.report_date, m.mall, m.media, m.campaign_id, m.campaign_name,
+    m.landing,
     m.impressions, m.clicks, m.cost, m.conversions, m.conversion_value
   FROM `rf-ads-db-500505.mart.ad_manual` m
   LEFT JOIN api_dates d

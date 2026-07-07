@@ -1,3 +1,4 @@
-report_date,mall,media,campaign_id,campaign_name,impressions,clicks,cost,conversions,conversion_value
-2025-02-20,cloop,meta,,의뢰자 프로모션,153418,4210,44090189,540,258540451
-2025-02-20,cloop,naver,,브랜드검색,20155,830,1200000,60,15400000
+report_date,mall,media,campaign_id,campaign_name,landing,impressions,clicks,cost,conversions,conversion_value
+2025-02-20,cloop,meta,,의뢰자 프로모션,,153418,4210,44090189,540,258540451
+2025-02-20,cloop,naver,,브랜드검색,자사몰,20155,830,1200000,60,15400000
+2025-02-20,cloop,naver,,쇼핑검색,스마트스토어,15000,600,900000,40,9000000

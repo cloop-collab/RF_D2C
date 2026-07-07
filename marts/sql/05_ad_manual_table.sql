@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS `rf-ads-db-500505.mart.ad_manual` (
   media STRING,
   campaign_id STRING,
   campaign_name STRING,
+  landing STRING,          -- (네이버 등) 자사몰/스마트스토어 랜딩 구분, 없으면 비움
   impressions INT64,
   clicks INT64,
   cost FLOAT64,
