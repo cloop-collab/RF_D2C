@@ -67,4 +67,4 @@ cat cafe24/sql/repurchase_daily_view.sql | bq query --use_legacy_sql=false
   일별/시간당 워크플로가 동시에 갱신하면 충돌 가능하나, access(2h) 유효 중엔 갱신하지 않아 실제 충돌은 드묾.
 - **지표 컬럼은 best-effort**: 정확한 필드명은 첫 실행의 `raw_json`을 보고 보강 예정.
   (`dim1/dim2/val1/val2` = 통계 대표값 자리, 실데이터 확인 후 명명)
-- 주문 API는 조회 구간 3개월 제한 → 90일 윈도우로 분할 수집.
+- 주문 API는 **offset 상한 15,000**(offset≥15000 조회 불가) → 30일 윈도우 + 구간 주문수(`/orders/count`) 기준 **자동 이분할**(각 하위구간 <15,000)로 누락·잘림 없이 수집. 하루 주문이 15,000 초과 시에만 경고(현재 최대 ~1.1만/일).

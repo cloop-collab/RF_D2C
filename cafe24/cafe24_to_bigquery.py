@@ -644,8 +644,41 @@ def _order_date(rec):
     return v[:10] if v else None
 
 
+ORDERS_OFFSET_CAP = 15000  # 카페24 orders offset 상한(offset>=15000 조회 불가)
+
+
+def orders_count(token_mgr, shop_no, since, until):
+    """구간 주문수(/orders/count). 실패 시 None."""
+    try:
+        data = admin_get("/orders/count", token_mgr, params={
+            "shop_no": shop_no, "start_date": since, "end_date": until,
+            "date_type": "order_date"})
+        return int(data.get("count") or 0) if isinstance(data, dict) else 0
+    except RuntimeError:
+        return None
+
+
 def collect_orders_window(token_mgr, s, w_since, w_until):
-    """단일 shop + 단일 90일 구간의 주문/주문상품 수집 (페이지네이션)."""
+    """구간 주문 수집. offset 상한(15000) 회피: 주문수가 상한 이상이면 날짜 구간을
+    재귀 이분할해 각 하위구간이 상한 미만이 되게 함(대량월 잘림·누락 방지)."""
+    cnt = orders_count(token_mgr, s["shop_no"], w_since, w_until)
+    if cnt == 0:
+        return [], []
+    if cnt is not None and cnt >= ORDERS_OFFSET_CAP and w_since != w_until:
+        d0, d1 = date.fromisoformat(w_since), date.fromisoformat(w_until)
+        mid = d0 + (d1 - d0) // 2
+        o1, i1 = collect_orders_window(token_mgr, s, w_since, mid.isoformat())
+        o2, i2 = collect_orders_window(
+            token_mgr, s, (mid + timedelta(days=1)).isoformat(), w_until)
+        return o1 + o2, i1 + i2
+    if cnt is not None and cnt >= ORDERS_OFFSET_CAP:  # 단일일이 상한 초과(극히 드묾)
+        log.warning("[orders/%s %s] 하루 주문 %d>=%d — offset 상한으로 일부 누락 가능",
+                    s["mall"], w_since, cnt, ORDERS_OFFSET_CAP)
+    return _paginate_orders(token_mgr, s, w_since, w_until)
+
+
+def _paginate_orders(token_mgr, s, w_since, w_until):
+    """단일 구간(주문수 < 상한) offset 페이지네이션 수집."""
     orders, items = [], []
     offset = 0
     while True:
@@ -689,6 +722,10 @@ def collect_orders_window(token_mgr, s, w_since, w_until):
         if len(chunk) < PAGE_LIMIT:
             break
         offset += PAGE_LIMIT
+        if offset >= ORDERS_OFFSET_CAP:  # 안전장치(정상적으로는 분할되어 도달 안 함)
+            log.warning("[orders/%s %s~%s] offset 상한 도달 — 구간 축소 필요",
+                        s["mall"], w_since, w_until)
+            break
         time.sleep(SLEEP_BETWEEN)
     return orders, items
 
@@ -781,8 +818,9 @@ def run_orders(client, token_mgr, shops, since_s, until_s):
                         partition_field="report_date", cluster=["mall", "order_id"])
     i_id = ensure_table(client, i_table, ORDER_ITEMS_SCHEMA,
                         partition_field="report_date", cluster=["mall", "product_no"])
-    # 90일 구간마다(양쪽 몰 합쳐) 즉시 적재 → 대량 백필 시 메모리 한정·부분 안전
-    for w_since, w_until in window_range(since_s, until_s, days=90):
+    # 30일 구간마다(양쪽 몰 합쳐) 즉시 적재 → 대량월도 메모리 한정. 구간 내부는
+    # collect_orders_window 가 주문수 기준으로 자동 이분할(offset 상한 회피).
+    for w_since, w_until in window_range(since_s, until_s, days=30):
         w_orders, w_items = [], []
         for s in shops:
             o, i = collect_orders_window(token_mgr, s, w_since, w_until)
