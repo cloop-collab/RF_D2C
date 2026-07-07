@@ -1,0 +1,33 @@
+name: 수신거부(BLOCKLIST) 시트 적재
+
+# 수신거부 구글시트 → cafe24.blocklist. 매일 갱신 + 수동 실행.
+# 전제: 시트를 rf-mkt@rf-ads-db-500505.iam.gserviceaccount.com 에 '뷰어' 공유.
+
+on:
+  schedule:
+    - cron: "30 21 * * *"   # 매일 06:30 KST
+  workflow_dispatch:
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_LOCATION: asia-northeast3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install google-cloud-bigquery google-api-python-client google-auth
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재
+        run: python crm/load_blocklist.py
+      - if: always()
+        run: rm -f sa_key.json
