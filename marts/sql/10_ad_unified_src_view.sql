@@ -55,8 +55,26 @@ kakao AS (
   FROM `rf-ads-db-500505.kakao_moment.rf_kakao_campaign`
   WHERE date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
   GROUP BY report_date, mall, campaign_id
+),
+-- 광고 어드민 다운로드 RAW(과거 이력 보완, mart.ad_manual).
+-- 중복 방지: 같은 (media,mall,report_date)가 API에 있으면 API 우선, 없을 때만 수동 RAW 사용.
+api_union AS (
+  SELECT * FROM meta
+  UNION ALL SELECT * FROM naver
+  UNION ALL SELECT * FROM google
+  UNION ALL SELECT * FROM kakao
+),
+api_dates AS (
+  SELECT DISTINCT media, mall, report_date FROM api_union
+),
+manual AS (
+  SELECT m.report_date, m.mall, m.media, m.campaign_id, m.campaign_name,
+    m.impressions, m.clicks, m.cost, m.conversions, m.conversion_value
+  FROM `rf-ads-db-500505.mart.ad_manual` m
+  LEFT JOIN api_dates d
+    ON d.media = m.media AND d.mall = m.mall AND d.report_date = m.report_date
+  WHERE m.report_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
+    AND d.media IS NULL   -- API가 커버하지 않는 (media,mall,일자)만 수동 RAW 사용
 )
-SELECT * FROM meta
-UNION ALL SELECT * FROM naver
-UNION ALL SELECT * FROM google
-UNION ALL SELECT * FROM kakao
+SELECT * FROM api_union
+UNION ALL SELECT * FROM manual
