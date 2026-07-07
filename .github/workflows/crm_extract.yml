@@ -1,0 +1,73 @@
+name: CRM 발송대상 추출 (온디맨드)
+
+# 개인정보는 BigQuery/코드에 저장하지 않고, 발송리스트 CSV 아티팩트로만 출력합니다.
+# 아티팩트는 1일 후 자동 삭제. 발송은 기존 CRM/메시지 툴에서 진행하세요.
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_no:
+        description: "상품번호(콤마). 예: 472,401  (키워드와 함께 주면 둘 중 하나라도 매칭)"
+        required: false
+        default: ""
+      product_kw:
+        description: "상품명 키워드(부분일치). 예: 애사비"
+        required: false
+        default: ""
+      days:
+        description: "최근 N일 내 구매 (기본 30)"
+        required: false
+        default: "30"
+      mall:
+        description: "cloop | sprint | all (기본 all)"
+        required: false
+        default: "all"
+      min_orders:
+        description: "기간 내 최소 주문수 (기본 1)"
+        required: false
+        default: "1"
+      channel:
+        description: "수신동의 필터: sms | email | all (기본 all)"
+        required: false
+        default: "all"
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_DATASET: cafe24
+      BQ_LOCATION: asia-northeast3
+      CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
+      CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
+      CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
+      CRM_PRODUCT_NO: ${{ github.event.inputs.product_no }}
+      CRM_PRODUCT_KW: ${{ github.event.inputs.product_kw }}
+      CRM_DAYS: ${{ github.event.inputs.days }}
+      CRM_MALL: ${{ github.event.inputs.mall }}
+      CRM_MIN_ORDERS: ${{ github.event.inputs.min_orders }}
+      CRM_CHANNEL: ${{ github.event.inputs.channel }}
+      CRM_OUT: send_list.csv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r cafe24/requirements.txt
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 발송대상 추출
+        run: python crm/crm_extract.py
+      - if: always()
+        run: rm -f sa_key.json
+      - name: 발송리스트 업로드(1일 보관)
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-send-list
+          path: send_list.csv
+          retention-days: 1
