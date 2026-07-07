@@ -67,6 +67,7 @@ def read_rows():
                     "media": (r.get("media") or "").strip().lower(),
                     "campaign_id": (r.get("campaign_id") or "").strip() or None,
                     "campaign_name": (r.get("campaign_name") or "").strip() or None,
+                    "landing": (r.get("landing") or "").strip() or None,
                     "impressions": int(_num(r.get("impressions")) or 0),
                     "clicks": int(_num(r.get("clicks")) or 0),
                     "cost": _num(r.get("cost")) or 0.0,
@@ -90,6 +91,7 @@ def main():
         bigquery.SchemaField("media", "STRING"),
         bigquery.SchemaField("campaign_id", "STRING"),
         bigquery.SchemaField("campaign_name", "STRING"),
+        bigquery.SchemaField("landing", "STRING"),
         bigquery.SchemaField("impressions", "INT64"),
         bigquery.SchemaField("clicks", "INT64"),
         bigquery.SchemaField("cost", "FLOAT64"),
@@ -109,7 +111,8 @@ def main():
     ON  T.media = S.media AND T.mall = S.mall AND T.report_date = S.report_date
         AND IFNULL(T.campaign_name,'') = IFNULL(S.campaign_name,'')
     WHEN MATCHED THEN UPDATE SET
-        campaign_id=S.campaign_id, impressions=S.impressions, clicks=S.clicks,
+        campaign_id=S.campaign_id, landing=S.landing,
+        impressions=S.impressions, clicks=S.clicks,
         cost=S.cost, conversions=S.conversions, conversion_value=S.conversion_value,
         source=S.source, loaded_at=S.loaded_at
     WHEN NOT MATCHED THEN INSERT ROW
