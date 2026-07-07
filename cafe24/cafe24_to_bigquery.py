@@ -21,6 +21,7 @@ cafe24_to_bigquery.py
     rf_cafe24_keyword_detail  ← /visitpaths/keyworddetails (키워드 구매전환)
     rf_cafe24_referrer_domain ← /visitpaths/domains  (유입 도메인)
     rf_cafe24_referrer_ad     ← /visitpaths/ads       (광고매체 유입)
+    rf_cafe24_member_joins    ← /customersprivacy/count (가입수 일별, 개수만·개인정보 미저장)
   파생 뷰 (SQL)
     rf_cafe24_repurchase_daily ← orders 계산 (첫재구매·재구매·재구매율)
   관리 API (https://{mall}.cafe24api.com/api/v2/admin) — 원본 건별
@@ -97,6 +98,7 @@ ALL_TABLES = [
     # 2026-07 추가: 장바구니·상품조회·방문자세부·결제수단·유입세부
     "cart_action", "product_view", "visitors_unique", "visitors_pageview",
     "visitors_dau", "sales_paymethod", "keyword_detail", "referrer_domain", "referrer_ad",
+    "member_joins",  # 가입수(개수만, 개인정보 미저장)
     "orders", "products",
 ]
 _env_tables = os.environ.get("CAFE24_TABLES", "").strip()
@@ -627,6 +629,15 @@ MASTER_CUSTOMERS_SCHEMA = [
     bigquery.SchemaField("ingested_at", "TIMESTAMP"),
 ]
 
+# 가입수: 개인정보 없이 '가입 개수'만 저장(프라이버시). /customersprivacy/count 를 일자별로 호출.
+MEMBER_JOINS_SCHEMA = [
+    bigquery.SchemaField("report_date", "DATE"),
+    bigquery.SchemaField("shop_no", "INT64"),
+    bigquery.SchemaField("mall", "STRING"),
+    bigquery.SchemaField("join_count", "INT64"),
+    bigquery.SchemaField("ingested_at", "TIMESTAMP"),
+]
+
 
 def _order_date(rec):
     v = _s(rec, "order_date", "payment_date", "created_date")
@@ -722,6 +733,29 @@ def collect_customers(token_mgr, shops):
     return rows
 
 
+def collect_member_joins(token_mgr, shops, since_s, until_s):
+    """가입수: /customersprivacy/count 를 '일자별'로 호출해 개수만 수집.
+    개인정보 원본은 절대 저장하지 않음(count 엔드포인트는 숫자만 반환).
+    필터: date_type=join(=가입일), start_date=end_date=해당일."""
+    rows = []
+    for s in shops:
+        for d in date_range(since_s, until_s):
+            params = {"shop_no": s["shop_no"], "date_type": "join",
+                      "start_date": d, "end_date": d}
+            try:
+                data = admin_get("/customersprivacy/count", token_mgr, params=params)
+            except RuntimeError as e:
+                log.warning("[member_joins/%s %s] 실패: %s", s["mall"], d, str(e)[:150])
+                continue
+            cnt = data.get("count") if isinstance(data, dict) else None
+            rows.append({
+                "report_date": d, "shop_no": s["shop_no"], "mall": s["mall"],
+                "join_count": int(cnt or 0), "ingested_at": now_utc_iso(),
+            })
+            time.sleep(SLEEP_BETWEEN)
+    return rows
+
+
 # ── 오케스트레이션 ───────────────────────────────────────────────────────────
 def run_analytics(client, token_mgr, shops, since_s, until_s):
     for name in ANALYTICS_SPEC:
@@ -782,6 +816,16 @@ def run_customers(client, token_mgr, shops):
         ensure_views(client, table, shops)
 
 
+def run_member_joins(client, token_mgr, shops, since_s, until_s):
+    table = _suffix("member_joins")
+    tid = ensure_table(client, table, MEMBER_JOINS_SCHEMA,
+                       partition_field="report_date", cluster=["mall"])
+    rows = collect_member_joins(token_mgr, shops, since_s, until_s)
+    load_by_partition(client, tid, MEMBER_JOINS_SCHEMA, rows, "report_date")
+    if not IS_D0:
+        ensure_views(client, table, shops)
+
+
 def main():
     missing = [k for k, v in {
         "CAFE24_MALL_ID": MALL_ID, "CAFE24_CLIENT_ID": CLIENT_ID,
@@ -814,6 +858,9 @@ def main():
         sections.append(("products", lambda: run_products(client, token_mgr, shops)))
     if "customers" in TABLES:
         sections.append(("customers", lambda: run_customers(client, token_mgr, shops)))
+    if "member_joins" in TABLES:
+        sections.append(("member_joins",
+                         lambda: run_member_joins(client, token_mgr, shops, since_s, until_s)))
 
     for label, fn in sections:
         try:

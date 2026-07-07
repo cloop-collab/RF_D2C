@@ -21,6 +21,7 @@
 | 통계 | `rf_cafe24_keyword_detail` / `_d0` | `/visitpaths/keyworddetails` (키워드 구매전환) |
 | 통계 | `rf_cafe24_referrer_domain` / `_d0` | `/visitpaths/domains` (유입 도메인) |
 | 통계 | `rf_cafe24_referrer_ad` / `_d0` | `/visitpaths/ads` (광고매체 유입) |
+| 회원 | `rf_cafe24_member_joins` / `_d0` | `/customersprivacy/count` (가입수 일별) |
 | 관리 | `rf_cafe24_orders` / `_d0` | `/orders?embed=items` |
 | 관리 | `rf_cafe24_order_items` / `_d0` | 위 주문의 items |
 | 관리 | `rf_cafe24_products` | `/products` (일 스냅샷) |
@@ -38,8 +39,10 @@
 cat cafe24/sql/repurchase_daily_view.sql | bq query --use_legacy_sql=false
 ```
 
-### 미수집(권한 필요)
-- **신규회원/가입수**: 카페24 통계 API에 전용 엔드포인트 없음. 관리 API 회원 조회는 앱 스코프(`mall.read_customer`/개인정보) 승인 후 가능 → 승인 시 `/customers`(created_date)로 일별 가입수 산출 추가 예정.
+### 가입수 (2026-07 추가, `mall.read_privacy` 필요)
+- `rf_cafe24_member_joins`: `/customersprivacy/count?date_type=join&start_date=D&end_date=D` 를 **일자별로 호출해 개수만** 적재. **개인정보 원본은 저장하지 않음**(count 엔드포인트는 숫자만 반환).
+- 몰 매핑: shop_no=1→cloop, shop_no=4→sprint (shop_no=2는 cloop 부속·소량).
+- 이 테이블만 스코프 **`mall.read_privacy`(개인정보 Privacy)** 필요 → 앱에 추가 후 **재동의**로 토큰에 반영(`get_customer_scope_token.py` 참고). Redirect URI: `https://github.com/cloop-collab/RF_D2C`.
 
 ## GitHub Secrets (필요)
 
