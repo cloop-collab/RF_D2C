@@ -115,7 +115,12 @@ def main():
         impressions=S.impressions, clicks=S.clicks,
         cost=S.cost, conversions=S.conversions, conversion_value=S.conversion_value,
         source=S.source, loaded_at=S.loaded_at
-    WHEN NOT MATCHED THEN INSERT ROW
+    WHEN NOT MATCHED THEN INSERT
+        (report_date, mall, media, campaign_id, campaign_name, landing,
+         impressions, clicks, cost, conversions, conversion_value, source, loaded_at)
+        VALUES
+        (S.report_date, S.mall, S.media, S.campaign_id, S.campaign_name, S.landing,
+         S.impressions, S.clicks, S.cost, S.conversions, S.conversion_value, S.source, S.loaded_at)
     """
     bq.query(merge).result()
     bq.delete_table(STAGING, not_found_ok=True)
