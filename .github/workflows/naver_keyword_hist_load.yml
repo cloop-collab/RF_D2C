@@ -1,0 +1,36 @@
+name: 네이버 키워드 이력 적재 (naver_ads.rf_naver_keyword_hist)
+
+# naver/keyword_hist_data/*.csv (전환보고서 정리본, 키워드 단위) → BigQuery.
+# CSV 커밋 시 자동 실행 + 수동 실행. 멱등(날짜 파티션 덮어쓰기).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "naver/keyword_hist_data/*.csv"
+  workflow_dispatch:
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_LOCATION: asia-northeast3
+      NAVER_KW_DIR: naver/keyword_hist_data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install google-cloud-bigquery
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재
+        run: python naver/load_keyword_hist.py
+      - if: always()
+        run: rm -f sa_key.json
