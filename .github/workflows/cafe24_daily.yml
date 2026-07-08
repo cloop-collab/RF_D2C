@@ -17,6 +17,14 @@ on:
         description: "대상 테이블 제한 (콤마목록, 예: orders,products). 비우면 전체."
         required: false
         default: ""
+      since:
+        description: "백필 시작일 YYYY-MM-DD (청크 백필용, backfill_days보다 우선). 비우면 미사용."
+        required: false
+        default: ""
+      until:
+        description: "백필 종료일 YYYY-MM-DD (since와 함께). 비우면 오늘."
+        required: false
+        default: ""
 
 jobs:
   load:
@@ -37,6 +45,8 @@ jobs:
       BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
       CAFE24_ORDERS_FULL: ${{ github.event.inputs.orders_full }}
       CAFE24_TABLES: ${{ github.event.inputs.tables }}
+      CAFE24_SINCE: ${{ github.event.inputs.since }}
+      CAFE24_UNTIL: ${{ github.event.inputs.until }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
