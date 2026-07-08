@@ -98,8 +98,11 @@ ALL_TABLES = [
     # 2026-07 추가: 장바구니·상품조회·방문자세부·결제수단·유입세부
     "cart_action", "product_view", "visitors_unique", "visitors_pageview",
     "visitors_dau", "sales_paymethod", "keyword_detail", "referrer_domain", "referrer_ad",
+    # 2026-07-08 매출귀속 + 추가 지표
+    "ad_sales", "adkeyword_sales", "keyword_sales", "domain_sales", "ad_effect",
+    "category_sales", "sales_pervisitor", "pages_view", "referrer_url",
     "member_joins",  # 가입수(개수만, 개인정보 미저장)
-    "orders", "products",
+    "orders", "order_attribution", "products",
 ]
 _env_tables = os.environ.get("CAFE24_TABLES", "").strip()
 TABLES = [t.strip() for t in _env_tables.split(",") if t.strip()] or ALL_TABLES
@@ -513,6 +516,35 @@ ANALYTICS_SPEC = {
     "referrer_ad":     dict(path="/visitpaths/ads", keys=["ads"],
                             dim1=["ad"], dim2=[], val1=["visit_count"],
                             val2=[], per_day=True),               # 광고매체 유입
+    # ── 2026-07-08 매출귀속(sales attribution) + 추가 지표 (실측 검증) ──
+    "ad_sales":        dict(path="/visitpaths/adsales", keys=["adsales"],
+                            dim1=["ad"], dim2=[], val1=["order_amount"],
+                            val2=["order_count"], per_day=True),  # 광고매체별 매출/전환(join_count=raw)
+    "adkeyword_sales": dict(path="/visitpaths/adkeywordsales", keys=["adkeywordsales"],
+                            dim1=["ad"], dim2=["keyword"], val1=["order_amount"],
+                            val2=["order_count"], per_day=True),  # 광고×키워드별 매출
+    "keyword_sales":   dict(path="/visitpaths/keywordsales", keys=["keywordsales"],
+                            dim1=["keyword"], dim2=[], val1=["order_amount"],
+                            val2=["order_count"], per_day=True),  # 검색어별 매출
+    "domain_sales":    dict(path="/visitpaths/domainsales", keys=["domainsales"],
+                            dim1=["domain"], dim2=[], val1=["order_amount"],
+                            val2=["order_count"], per_day=True),  # 유입도메인별 매출
+    "ad_effect":       dict(path="/adeffect/addetails", keys=["addetails"],
+                            dim1=["ad"], dim2=["keyword"], val1=["order_amount"],
+                            val2=["purchase_count"], per_day=True),  # 광고효과(방문/구매/전환율=raw)
+    "category_sales":  dict(path="/products/categorydetails", keys=["categorydetails"],
+                            dim1=["category_name"], dim2=["product_name"],
+                            val1=["sales_price_per_category"],
+                            val2=["sales_count_per_category"], per_day=True),  # 카테고리별 매출
+    "sales_pervisitor": dict(path="/sales/pervisitors", keys=["pervisitors"],
+                            dim1=[], dim2=[], val1=["order_amount_per_buyer"],
+                            val2=["order_amount_per_visitor"], per_day=True),  # 방문/구매자당 매출
+    "pages_view":      dict(path="/pages/view", keys=["view"],
+                            dim1=["url"], dim2=[], val1=["count"],
+                            val2=["visit_count"], per_day=True),  # 페이지별 트래픽
+    "referrer_url":    dict(path="/visitpaths/urls", keys=["urls"],
+                            dim1=["url"], dim2=[], val1=["visit_count"],
+                            val2=[], per_day=True),               # 유입 URL별
 }
 
 
@@ -878,6 +910,74 @@ def run_member_joins(client, token_mgr, shops, since_s, until_s):
         ensure_views(client, table, shops)
 
 
+# ── 주문별 유입귀속 (/sales/orderdetails, 주문 단위) ─────────────────────────
+# 주문 하나하나에 first-touch 광고 귀속(ad/medium/keyword/campaign/content)이 붙는다.
+# order_id 로 rf_cafe24_orders·GA4 거래와 조인 가능. 세트명(-R 포함)이 campaign 에 옴.
+ORDER_ATTR_SCHEMA = [
+    bigquery.SchemaField("report_date", "DATE"),       # order_date(KST)
+    bigquery.SchemaField("shop_no", "INT64"),
+    bigquery.SchemaField("mall", "STRING"),
+    bigquery.SchemaField("order_id", "STRING"),
+    bigquery.SchemaField("ad", "STRING"),              # 유입 광고매체(facebook/네이버/crm…)
+    bigquery.SchemaField("keyword", "STRING"),
+    bigquery.SchemaField("medium", "STRING"),
+    bigquery.SchemaField("campaign", "STRING"),        # 캠페인/세트명(FB_..._260701-R 등)
+    bigquery.SchemaField("content", "STRING"),         # 소재명
+    bigquery.SchemaField("payment_method", "STRING"),
+    bigquery.SchemaField("order_amount", "FLOAT64"),
+    bigquery.SchemaField("raw_json", "STRING"),
+    bigquery.SchemaField("ingested_at", "TIMESTAMP"),
+]
+ORDER_ATTR_PAGE = 1000  # /sales/orderdetails 기본 100 → 최대치로 페이지네이션
+
+
+def collect_order_attribution(token_mgr, shops, since_s, until_s):
+    rows = []
+    for s in shops:
+        for d in date_range(since_s, until_s):
+            offset = 0
+            while True:
+                params = {"mall_id": MALL_ID, "shop_no": s["shop_no"],
+                          "start_date": d, "end_date": d,
+                          "limit": ORDER_ATTR_PAGE, "offset": offset}
+                try:
+                    data = analytics_get("/sales/orderdetails", token_mgr, params=params)
+                except RuntimeError as e:
+                    log.warning("[order_attribution/%s %s] 실패: %s", s["mall"], d, str(e)[:150])
+                    break
+                recs = _extract_list(data, ["orderdetails"])
+                for rec in recs:
+                    if not isinstance(rec, dict):
+                        continue
+                    od = (_s(rec, "order_date") or d)[:10]
+                    rows.append({
+                        "report_date": od, "shop_no": s["shop_no"], "mall": s["mall"],
+                        "order_id": _s(rec, "order_id"),
+                        "ad": _s(rec, "ad"), "keyword": _s(rec, "keyword"),
+                        "medium": _s(rec, "medium"), "campaign": _s(rec, "campaign"),
+                        "content": _s(rec, "content"),
+                        "payment_method": _s(rec, "payment_method"),
+                        "order_amount": _f(rec, "order_amount"),
+                        "raw_json": json.dumps(rec, ensure_ascii=False),
+                        "ingested_at": now_utc_iso(),
+                    })
+                time.sleep(SLEEP_BETWEEN)
+                if len(recs) < ORDER_ATTR_PAGE:
+                    break
+                offset += ORDER_ATTR_PAGE
+    return rows
+
+
+def run_order_attribution(client, token_mgr, shops, since_s, until_s):
+    table = _suffix("order_attribution")
+    tid = ensure_table(client, table, ORDER_ATTR_SCHEMA,
+                       partition_field="report_date", cluster=["mall", "ad"])
+    rows = collect_order_attribution(token_mgr, shops, since_s, until_s)
+    load_by_partition(client, tid, ORDER_ATTR_SCHEMA, rows, "report_date")
+    if not IS_D0:
+        ensure_views(client, table, shops)
+
+
 def main():
     missing = [k for k, v in {
         "CAFE24_MALL_ID": MALL_ID, "CAFE24_CLIENT_ID": CLIENT_ID,
@@ -906,6 +1006,9 @@ def main():
         sections.append(("analytics", lambda: run_analytics(client, token_mgr, shops, since_s, until_s)))
     if "orders" in TABLES:
         sections.append(("orders", lambda: run_orders(client, token_mgr, shops, orders_since, until_s)))
+    if "order_attribution" in TABLES:
+        sections.append(("order_attribution",
+                         lambda: run_order_attribution(client, token_mgr, shops, since_s, until_s)))
     if "products" in TABLES:
         sections.append(("products", lambda: run_products(client, token_mgr, shops)))
     if "customers" in TABLES:

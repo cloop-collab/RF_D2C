@@ -20,8 +20,8 @@ jobs:
       CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
       CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
       CAFE24_SHOPS: '[{"shop_no":1,"mall":"cloop"},{"shop_no":2,"mall":"cloop"},{"shop_no":4,"mall":"sprint"}]'
-      # 당일 시간당 갱신은 통계 + 주문만 (마스터 스냅샷은 Daily에서만)
-      CAFE24_TABLES: "sales_daily,product_sales,traffic,traffic_keyword,members,orders"
+      # 당일 갱신은 통계 + 주문 + 매출귀속만 (마스터 스냅샷은 Daily에서만)
+      CAFE24_TABLES: "sales_daily,product_sales,traffic,traffic_keyword,members,orders,order_attribution,ad_sales,adkeyword_sales,keyword_sales,domain_sales,ad_effect,sales_pervisitor"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
