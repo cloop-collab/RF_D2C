@@ -1,0 +1,37 @@
+name: GA4 Transactions to BigQuery
+
+on:
+  schedule:
+    - cron: '20 20 * * *'   # 매일 05:20 KST (rf_ga4 daily 이후)
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "과거 N일 1회 백필 (예: 400). 비워두면 일상 모드(최근 7일)."
+        required: false
+        default: ""
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_DATASET: rf_ga4
+      BQ_TABLE_TX: rf_ga4_transactions
+      BQ_LOCATION: asia-northeast3
+      LOOKBACK_DAYS: "7"
+      KEEP_DAYS: "730"
+      BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r ga4/requirements.txt
+      - run: printf '%s' "$GCP_SA_KEY" > /tmp/sa.json
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      - name: Load rf_ga4_transactions (daily / backfill)
+        run: python ga4/ga4_transactions_to_bigquery.py --mode daily
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
