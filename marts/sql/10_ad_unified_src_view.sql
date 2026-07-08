@@ -81,5 +81,10 @@ manual AS (
   WHERE m.report_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
     AND d.media IS NULL   -- API가 커버하지 않는 (media,mall,일자)만 수동 RAW 사용
 )
-SELECT * FROM api_union
-UNION ALL SELECT * FROM manual
+-- sales_channel(판매채널): 스마트스토어(단일 클룹) vs 자사몰(몰별). 매출 매칭용.
+--   landing=스마트스토어 → 'smartstore' / 그 외(자사몰·NULL) → 몰(cloop/sprint)=cafe24 자사몰
+SELECT *, CASE WHEN landing = '스마트스토어' THEN 'smartstore' ELSE mall END AS sales_channel
+FROM (
+  SELECT * FROM api_union
+  UNION ALL SELECT * FROM manual
+)
