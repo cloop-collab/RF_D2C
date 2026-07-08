@@ -1,8 +1,8 @@
-name: Cafe24 to BigQuery Hourly (Today)
+name: Cafe24 to BigQuery Intraday (Today)
 
 on:
   schedule:
-    - cron: "0 * * * *"   # 매시 정각(UTC) = 매시간 1회, 당일 데이터 갱신
+    - cron: "*/15 * * * *"   # 15분마다, 당일 데이터 갱신(실시간성↑). 1회 실행 ~2분이라 겹침 없음.
   workflow_dispatch: {}
 
 jobs:
