@@ -82,6 +82,9 @@ ANALYTICS_BASE = "https://ca-api.cafe24data.com"
 
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")
+# 명시적 기간 백필(청크용). YYYY-MM-DD. 설정 시 BACKFILL_DAYS보다 우선.
+BACKFILL_SINCE = os.environ.get("CAFE24_SINCE", "").strip()
+BACKFILL_UNTIL = os.environ.get("CAFE24_UNTIL", "").strip()
 IS_D0 = os.environ.get("CAFE24_D0", "").strip() in ("1", "true", "True")
 ORDERS_START = os.environ.get("CAFE24_ORDERS_START", "2018-01-01")
 SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN") or "0.5")
@@ -415,6 +418,8 @@ def compute_span():
     until = datetime.now(KST).date()
     if IS_D0:
         return until.isoformat(), until.isoformat()
+    if BACKFILL_SINCE:
+        return BACKFILL_SINCE, (BACKFILL_UNTIL or until.isoformat())
     span = BACKFILL_DAYS if BACKFILL_DAYS > 0 else LOOKBACK_DAYS
     since = until - timedelta(days=span - 1)
     return since.isoformat(), until.isoformat()
