@@ -199,13 +199,20 @@ def load_merge_range(bq, rows, start, end):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", default="daily", choices=["daily"])
-    ap.parse_args()
+    ap.add_argument("--mode", default="daily", choices=["daily", "d0"])
+    args = ap.parse_args()
 
     bq = bigquery.Client(project=GCP_PROJECT)
     ensure_dataset(bq)
     today = dt.datetime.now(KST).date()
     yesterday = today - dt.timedelta(days=1)
+
+    if args.mode == "d0":
+        # 시간당 intraday: 오늘 파티션만 최신으로 덮어씀(같은 테이블). GA4 당일값은 지연·변동.
+        d = today.isoformat()
+        print(f"[d0/intraday] {d}")
+        load_merge_range(bq, fetch_all(d, d), d, d)
+        return
 
     if BACKFILL_DAYS > 0:
         start = (today - dt.timedelta(days=BACKFILL_DAYS)).isoformat()
