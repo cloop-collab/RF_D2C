@@ -86,6 +86,9 @@ BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")
 BACKFILL_SINCE = os.environ.get("CAFE24_SINCE", "").strip()
 BACKFILL_UNTIL = os.environ.get("CAFE24_UNTIL", "").strip()
 IS_D0 = os.environ.get("CAFE24_D0", "").strip() in ("1", "true", "True")
+# 몰별 뷰(_cloop/_sprint) 자동생성 여부. 기본 OFF(원본표에 mall 컬럼이 있어 WHERE mall=..로 대체).
+# 예전엔 표마다 자동생성해 뷰가 수십 개로 불어남 → 정리. 필요하면 CAFE24_MALL_VIEWS=1 로 켤 수 있음.
+MAKE_MALL_VIEWS = os.environ.get("CAFE24_MALL_VIEWS", "").strip() in ("1", "true", "True")
 ORDERS_START = os.environ.get("CAFE24_ORDERS_START", "2018-01-01")
 SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN") or "0.5")
 PAGE_LIMIT = int(os.environ.get("CAFE24_PAGE_LIMIT", "100"))
@@ -856,7 +859,7 @@ def run_analytics(client, token_mgr, shops, since_s, until_s):
                                     cluster=["mall", "dim1"])
             rows = collect_analytics(name, token_mgr, shops, since_s, until_s)
             load_by_partition(client, table_id, ANALYTICS_SCHEMA, rows, "report_date")
-            if not IS_D0:
+            if not IS_D0 and MAKE_MALL_VIEWS:
                 ensure_views(client, table, shops)
         except Exception as e:  # noqa: BLE001
             log.warning("[%s] 수집/적재 실패, 건너뜀: %s", name, str(e)[:200])
@@ -879,7 +882,7 @@ def run_orders(client, token_mgr, shops, since_s, until_s):
             w_items += i
         load_by_partition(client, o_id, ORDERS_SCHEMA, w_orders, "report_date")
         load_by_partition(client, i_id, ORDER_ITEMS_SCHEMA, w_items, "report_date")
-    if not IS_D0:
+    if not IS_D0 and MAKE_MALL_VIEWS:
         ensure_views(client, o_table, shops)
         ensure_views(client, i_table, shops)
 
@@ -891,7 +894,7 @@ def run_products(client, token_mgr, shops):
     rows = collect_products(token_mgr, shops)
     # 스냅샷: 오늘 파티션만 덮어쓰기
     load_by_partition(client, tid, MASTER_PRODUCTS_SCHEMA, rows, "snapshot_date")
-    if not IS_D0:
+    if not IS_D0 and MAKE_MALL_VIEWS:
         ensure_views(client, table, shops)
 
 
@@ -901,7 +904,7 @@ def run_customers(client, token_mgr, shops):
                        partition_field="snapshot_date", cluster=["mall", "member_id"])
     rows = collect_customers(token_mgr, shops)
     load_by_partition(client, tid, MASTER_CUSTOMERS_SCHEMA, rows, "snapshot_date")
-    if not IS_D0:
+    if not IS_D0 and MAKE_MALL_VIEWS:
         ensure_views(client, table, shops)
 
 
@@ -911,7 +914,7 @@ def run_member_joins(client, token_mgr, shops, since_s, until_s):
                        partition_field="report_date", cluster=["mall"])
     rows = collect_member_joins(token_mgr, shops, since_s, until_s)
     load_by_partition(client, tid, MEMBER_JOINS_SCHEMA, rows, "report_date")
-    if not IS_D0:
+    if not IS_D0 and MAKE_MALL_VIEWS:
         ensure_views(client, table, shops)
 
 
@@ -979,7 +982,7 @@ def run_order_attribution(client, token_mgr, shops, since_s, until_s):
                        partition_field="report_date", cluster=["mall", "ad"])
     rows = collect_order_attribution(token_mgr, shops, since_s, until_s)
     load_by_partition(client, tid, ORDER_ATTR_SCHEMA, rows, "report_date")
-    if not IS_D0:
+    if not IS_D0 and MAKE_MALL_VIEWS:
         ensure_views(client, table, shops)
 
 
