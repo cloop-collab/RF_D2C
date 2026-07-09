@@ -1,0 +1,31 @@
+name: Data Freshness Check
+
+on:
+  schedule:
+    - cron: "0 1 * * *"    # 매일 10:00 KST (모든 적재 이후). 오래되면 실패→알림.
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install google-cloud-bigquery requests
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 신선도 점검
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+          BQ_PROJECT: rf-ads-db-500505
+          BQ_LOCATION: asia-northeast3
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}   # 선택: 있으면 슬랙 알림
+        run: python monitoring/freshness_check.py
+      - if: always()
+        run: rm -f sa_key.json

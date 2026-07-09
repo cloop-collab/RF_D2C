@@ -9,6 +9,12 @@ on:
         description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(최근 7일)."
         required: false
         default: ""
+
+# 카페24 refresh 토큰은 사용 시마다 회전(rotate)됨 → 여러 카페24 워크플로가 동시에 돌면
+# 서로의 토큰을 무효화하는 경합 발생. 모든 카페24 잡을 하나의 그룹으로 직렬화(진행중 취소 안 함=큐잉).
+concurrency:
+  group: cafe24-token
+  cancel-in-progress: false
       orders_full:
         description: "주문 전체기간 백필 여부 (1 입력 시 CAFE24_ORDERS_START부터). 통계/마스터에는 영향 없음."
         required: false
@@ -60,5 +66,7 @@ jobs:
           KEY
       - name: 적재 (통계 + 관리 API)
         run: python cafe24/cafe24_to_bigquery.py
+      - name: 파생 뷰 갱신 (cafe24/sql/*.sql)
+        run: python cafe24/refresh_cafe24_views.py
       - if: always()
         run: rm -f sa_key.json
