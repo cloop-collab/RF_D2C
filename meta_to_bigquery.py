@@ -40,6 +40,9 @@ AD_ACCOUNT_IDS = os.environ.get("AD_ACCOUNT_IDS", "여기에_광고계정ID").sp
 API_VERSION = os.environ.get("META_API_VERSION", "v25.0")
 LEVEL = os.environ.get("META_LEVEL", "ad")
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
+# 어트리뷰션 윈도우: 지정하면 actions/action_values 각 항목에 윈도우별 값(1d_click/7d_click/1d_view/1d_ev)이 함께 담긴다.
+# 최상위 value(계정 기본 어트리뷰션)는 그대로 유지되므로 web_purchase_* 는 안 바뀐다. 빈값이면 기존 동작(기본만).
+META_ATTR_WINDOWS = os.environ.get("META_ATTR_WINDOWS", "").strip()
 # 백필(1회성): 과거 N개월을 한 번에 채울 때만 설정 (예: 37). 0/빈값이면 일상(daily) 모드.
 BACKFILL_MONTHS = int(os.environ.get("BACKFILL_MONTHS") or "0")
 # 요청 사이 대기(초): 메타 앱 요청 한도(rate limit) 회피용
@@ -160,6 +163,10 @@ def _start_async_report(account_id, fields, since, until):
         "fields": ",".join(fields),
         "time_range": json.dumps({"since": since, "until": until}),
     }
+    if META_ATTR_WINDOWS:
+        # 윈도우별 전환값을 함께 받는다(각 action 항목에 1d_click/7d_click/1d_view/1d_ev 키 추가).
+        data["action_attribution_windows"] = json.dumps(
+            [w.strip() for w in META_ATTR_WINDOWS.split(",") if w.strip()])
     resp = requests.post(url, data=data, timeout=120)
     payload = resp.json()
     if "error" in payload:
