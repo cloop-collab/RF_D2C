@@ -12,3 +12,15 @@ RETURNS FLOAT64 AS ((
   ORDER BY pri
   LIMIT 1
 ));
+
+-- 우선순위로 매칭된 action 항목 "전체"를 JSON 문자열로 반환(없으면 NULL).
+-- 어트리뷰션 윈도우별 값(1d_click/7d_click/1d_view/1d_ev)을 뷰에서 꺼내 쓰기 위한 헬퍼.
+CREATE OR REPLACE FUNCTION `rf-ads-db-500505.meta_ads.action_obj`(arr STRING, types ARRAY<STRING>)
+RETURNS STRING AS ((
+  SELECT a   -- JSON_EXTRACT_ARRAY 원소는 이미 JSON 문자열
+  FROM UNNEST(JSON_EXTRACT_ARRAY(arr)) AS a
+  JOIN UNNEST(types) AS t WITH OFFSET AS pri
+    ON JSON_VALUE(a, '$.action_type') = t
+  ORDER BY pri
+  LIMIT 1
+));

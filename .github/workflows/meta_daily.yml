@@ -53,7 +53,8 @@ jobs:
           BQ_TABLE: ${{ github.event.inputs.target_table || 'rf_meta_ads' }}
           LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
           BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months }}
-          META_ATTR_WINDOWS: ${{ github.event.inputs.attr_windows }}
+          # 스케줄/수동 모두 어트리뷰션 윈도우 포함 수집(입력이 있으면 우선). value(계정 기본)는 불변.
+          META_ATTR_WINDOWS: ${{ github.event.inputs.attr_windows || '1d_click,7d_click,1d_view,1d_ev' }}
         run: python meta_to_bigquery.py
       - name: 메타 평탄화 뷰 갱신 (meta/sql/*.sql)
         env:
