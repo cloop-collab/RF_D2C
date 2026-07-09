@@ -12,6 +12,26 @@ on:
         description: "과거 N개월 1회 백필 (예: 37). 비워두면 일상 모드(최근 7일)."
         required: false
         default: ""
+      attr_windows:
+        description: "어트리뷰션 윈도우(콤마). 예: 1d_click,7d_click,1d_view,1d_ev. 비우면 기본만."
+        required: false
+        default: ""
+      target_table:
+        description: "적재 대상 테이블(검증용 임시표 지정 가능). 비우면 rf_meta_ads."
+        required: false
+        default: ""
+      lookback_days:
+        description: "일상 모드에서 최근 며칠. 비우면 7."
+        required: false
+        default: ""
+      since:
+        description: "구간 백필 시작일 YYYY-MM-DD (until과 함께). 장기간 청크 실행용."
+        required: false
+        default: ""
+      until:
+        description: "구간 백필 종료일 YYYY-MM-DD (since와 함께)."
+        required: false
+        default: ""
 
 jobs:
   load:
@@ -38,10 +58,20 @@ jobs:
           AD_ACCOUNT_IDS: ${{ secrets.AD_ACCOUNT_IDS }}
           BQ_PROJECT: rf-ads-db-500505
           BQ_DATASET: meta_ads
-          BQ_TABLE: rf_meta_ads
-          LOOKBACK_DAYS: "7"
+          BQ_TABLE: ${{ github.event.inputs.target_table || 'rf_meta_ads' }}
+          LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
           BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months }}
+          META_SINCE: ${{ github.event.inputs.since }}
+          META_UNTIL: ${{ github.event.inputs.until }}
+          # 스케줄/수동 모두 어트리뷰션 윈도우 포함 수집(입력이 있으면 우선). value(계정 기본)는 불변.
+          META_ATTR_WINDOWS: ${{ github.event.inputs.attr_windows || '1d_click,7d_click,1d_view,1d_ev' }}
         run: python meta_to_bigquery.py
+      - name: 메타 평탄화 뷰 갱신 (meta/sql/*.sql)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+          BQ_PROJECT: rf-ads-db-500505
+          BQ_LOCATION: asia-northeast3
+        run: python meta/refresh_meta_views.py
       - name: 키 파일 삭제
         if: always()
         run: rm -f sa_key.json

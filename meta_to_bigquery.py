@@ -40,6 +40,9 @@ AD_ACCOUNT_IDS = os.environ.get("AD_ACCOUNT_IDS", "여기에_광고계정ID").sp
 API_VERSION = os.environ.get("META_API_VERSION", "v25.0")
 LEVEL = os.environ.get("META_LEVEL", "ad")
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
+# 어트리뷰션 윈도우: 지정하면 actions/action_values 각 항목에 윈도우별 값(1d_click/7d_click/1d_view/1d_ev)이 함께 담긴다.
+# 최상위 value(계정 기본 어트리뷰션)는 그대로 유지되므로 web_purchase_* 는 안 바뀐다. 빈값이면 기존 동작(기본만).
+META_ATTR_WINDOWS = os.environ.get("META_ATTR_WINDOWS", "").strip()
 # 백필(1회성): 과거 N개월을 한 번에 채울 때만 설정 (예: 37). 0/빈값이면 일상(daily) 모드.
 BACKFILL_MONTHS = int(os.environ.get("BACKFILL_MONTHS") or "0")
 # 요청 사이 대기(초): 메타 앱 요청 한도(rate limit) 회피용
@@ -160,6 +163,10 @@ def _start_async_report(account_id, fields, since, until):
         "fields": ",".join(fields),
         "time_range": json.dumps({"since": since, "until": until}),
     }
+    if META_ATTR_WINDOWS:
+        # 윈도우별 전환값을 함께 받는다(각 action 항목에 1d_click/7d_click/1d_view/1d_ev 키 추가).
+        data["action_attribution_windows"] = json.dumps(
+            [w.strip() for w in META_ATTR_WINDOWS.split(",") if w.strip()])
     resp = requests.post(url, data=data, timeout=120)
     payload = resp.json()
     if "error" in payload:
@@ -402,12 +409,9 @@ def _minus_months(d, months):
     return date(y, m, min(d.day, monthrange(y, m)[1]))
 
 
-def run_backfill(client, table_id, months):
-    until = datetime.now(KST).date()
-    # 메타는 시작일이 현재로부터 37개월을 넘으면 거부(#3018).
-    # 정확히 N개월 전에서 5일 버퍼를 둬 안전하게 시작.
-    since = _minus_months(until, months) + timedelta(days=5)
-    log.info("백필 시작: %s ~ %s (요청 %d개월, 메타 37개월 제한 반영)", since, until, months)
+def _run_backfill_range(client, table_id, since, until):
+    """since~until 을 달 단위로 나눠 파티션 덮어쓰기 적재."""
+    log.info("백필 시작: %s ~ %s", since, until)
     grand = 0
     for ws, we in _month_windows(since, until):
         rows = _collect_rows(ws.isoformat(), we.isoformat())
@@ -418,13 +422,28 @@ def run_backfill(client, table_id, months):
     log.info("백필 완료: 총 %d행", grand)
 
 
+def run_backfill(client, table_id, months):
+    until = datetime.now(KST).date()
+    # 메타는 시작일이 현재로부터 37개월을 넘으면 거부(#3018).
+    # 정확히 N개월 전에서 5일 버퍼를 둬 안전하게 시작.
+    since = _minus_months(until, months) + timedelta(days=5)
+    log.info("월수 기준 백필: 최근 %d개월(메타 37개월 제한 반영)", months)
+    _run_backfill_range(client, table_id, since, until)
+
+
 def main():
     if "여기에" in META_ACCESS_TOKEN or "여기에" in "".join(AD_ACCOUNT_IDS):
         log.error("META_ACCESS_TOKEN 과 AD_ACCOUNT_IDS 를 먼저 채워주세요.")
         sys.exit(1)
     client = bigquery.Client(project=BQ_PROJECT, location=BQ_LOCATION)
     table_id = ensure_table(client)
-    if BACKFILL_MONTHS > 0:
+    since_s = os.environ.get("META_SINCE", "").strip()
+    until_s = os.environ.get("META_UNTIL", "").strip()
+    if since_s and until_s:
+        # 구간 지정 백필(장기간 타임아웃 방지용 청크 실행). 예: 2023-06-01 ~ 2023-12-31
+        _run_backfill_range(client, table_id,
+                            date.fromisoformat(since_s), date.fromisoformat(until_s))
+    elif BACKFILL_MONTHS > 0:
         run_backfill(client, table_id, BACKFILL_MONTHS)
     else:
         run_daily(client, table_id)
