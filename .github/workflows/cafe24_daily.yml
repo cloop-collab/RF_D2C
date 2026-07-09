@@ -9,12 +9,6 @@ on:
         description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(최근 7일)."
         required: false
         default: ""
-
-# 카페24 refresh 토큰은 사용 시마다 회전(rotate)됨 → 여러 카페24 워크플로가 동시에 돌면
-# 서로의 토큰을 무효화하는 경합 발생. 모든 카페24 잡을 하나의 그룹으로 직렬화(진행중 취소 안 함=큐잉).
-concurrency:
-  group: cafe24-token
-  cancel-in-progress: false
       orders_full:
         description: "주문 전체기간 백필 여부 (1 입력 시 CAFE24_ORDERS_START부터). 통계/마스터에는 영향 없음."
         required: false
@@ -31,6 +25,12 @@ concurrency:
         description: "백필 종료일 YYYY-MM-DD (since와 함께). 비우면 오늘."
         required: false
         default: ""
+
+# 카페24 refresh 토큰은 사용 시마다 회전(rotate)됨 → 여러 카페24 워크플로가 동시에 돌면
+# 서로의 토큰을 무효화하는 경합 발생. 모든 카페24 잡을 하나의 그룹으로 직렬화(진행중 취소 안 함=큐잉).
+concurrency:
+  group: cafe24-token
+  cancel-in-progress: false
 
 jobs:
   load:
