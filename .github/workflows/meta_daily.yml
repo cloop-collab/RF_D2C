@@ -42,6 +42,12 @@ jobs:
           LOOKBACK_DAYS: "7"
           BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months }}
         run: python meta_to_bigquery.py
+      - name: 메타 평탄화 뷰 갱신 (meta/sql/*.sql)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+          BQ_PROJECT: rf-ads-db-500505
+          BQ_LOCATION: asia-northeast3
+        run: python meta/refresh_meta_views.py
       - name: 키 파일 삭제
         if: always()
         run: rm -f sa_key.json
