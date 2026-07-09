@@ -409,12 +409,9 @@ def _minus_months(d, months):
     return date(y, m, min(d.day, monthrange(y, m)[1]))
 
 
-def run_backfill(client, table_id, months):
-    until = datetime.now(KST).date()
-    # 메타는 시작일이 현재로부터 37개월을 넘으면 거부(#3018).
-    # 정확히 N개월 전에서 5일 버퍼를 둬 안전하게 시작.
-    since = _minus_months(until, months) + timedelta(days=5)
-    log.info("백필 시작: %s ~ %s (요청 %d개월, 메타 37개월 제한 반영)", since, until, months)
+def _run_backfill_range(client, table_id, since, until):
+    """since~until 을 달 단위로 나눠 파티션 덮어쓰기 적재."""
+    log.info("백필 시작: %s ~ %s", since, until)
     grand = 0
     for ws, we in _month_windows(since, until):
         rows = _collect_rows(ws.isoformat(), we.isoformat())
@@ -425,13 +422,28 @@ def run_backfill(client, table_id, months):
     log.info("백필 완료: 총 %d행", grand)
 
 
+def run_backfill(client, table_id, months):
+    until = datetime.now(KST).date()
+    # 메타는 시작일이 현재로부터 37개월을 넘으면 거부(#3018).
+    # 정확히 N개월 전에서 5일 버퍼를 둬 안전하게 시작.
+    since = _minus_months(until, months) + timedelta(days=5)
+    log.info("월수 기준 백필: 최근 %d개월(메타 37개월 제한 반영)", months)
+    _run_backfill_range(client, table_id, since, until)
+
+
 def main():
     if "여기에" in META_ACCESS_TOKEN or "여기에" in "".join(AD_ACCOUNT_IDS):
         log.error("META_ACCESS_TOKEN 과 AD_ACCOUNT_IDS 를 먼저 채워주세요.")
         sys.exit(1)
     client = bigquery.Client(project=BQ_PROJECT, location=BQ_LOCATION)
     table_id = ensure_table(client)
-    if BACKFILL_MONTHS > 0:
+    since_s = os.environ.get("META_SINCE", "").strip()
+    until_s = os.environ.get("META_UNTIL", "").strip()
+    if since_s and until_s:
+        # 구간 지정 백필(장기간 타임아웃 방지용 청크 실행). 예: 2023-06-01 ~ 2023-12-31
+        _run_backfill_range(client, table_id,
+                            date.fromisoformat(since_s), date.fromisoformat(until_s))
+    elif BACKFILL_MONTHS > 0:
         run_backfill(client, table_id, BACKFILL_MONTHS)
     else:
         run_daily(client, table_id)
