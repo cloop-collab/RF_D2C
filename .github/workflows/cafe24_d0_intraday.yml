@@ -1,8 +1,11 @@
 name: Cafe24 to BigQuery Intraday (Today)
 
 on:
+  # GitHub 스케줄러는 */15 같은 고빈도 cron을 스킵해 실제론 ~시간당만 발화함.
+  # → 안정적인 '매시간 트리거' + 잡 내부 15분 루프(아래 step)로 실질 15분 갱신 보장.
+  #   (RF_D2C는 public 레포라 러너 시간 무료 → 장시간 잡 비용 없음)
   schedule:
-    - cron: "*/15 * * * *"   # 15분마다, 당일 데이터 갱신(실시간성↑). 1회 실행 ~2분이라 겹침 없음.
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 # Daily/백필과 같은 그룹 → 카페24 토큰 회전 경합 방지(동시 실행 직렬화).
@@ -39,7 +42,14 @@ jobs:
           cat > sa_key.json <<'KEY'
           ${{ secrets.GCP_SA_KEY }}
           KEY
-      - name: 적재 (당일)
-        run: python cafe24/cafe24_to_bigquery.py
+      # 매시간 트리거되어 잡 안에서 15분 간격 4회(≈:00/:15/:30/:45) 적재 → 실질 15분 실시간.
+      # 1회 실행 ~3분 + sleep 11분 = ~14분 주기, 4회 ~45분(60분 timeout 내). 한 주기 실패해도 다음 주기 계속.
+      - name: 적재 (당일 · 15분 간격 4회)
+        run: |
+          for i in 0 1 2 3; do
+            echo "===== cafe24 intraday cycle $i @ $(date -u '+%H:%M:%S') UTC ====="
+            python cafe24/cafe24_to_bigquery.py || echo "[warn] cycle $i 실패, 다음 주기 계속"
+            if [ "$i" -lt 3 ]; then sleep 660; fi
+          done
       - if: always()
         run: rm -f sa_key.json
