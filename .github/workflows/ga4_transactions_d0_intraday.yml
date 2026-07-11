@@ -1,8 +1,8 @@
 name: GA4 Transactions to BigQuery Hourly (Today)
 
 on:
-  schedule:
-    - cron: "10 * * * *"   # 매시 10분(UTC) = 시간당 1회, 오늘 거래 갱신
+  # 스케줄 제거: 이 잡은 GitHub 스케줄 스킵으로 4~9시간 간격으로만 발화됨.
+  # 당일 거래 갱신은 안정적으로 매시간 도는 ga4_d0_intraday.yml에 통합함. 여기선 수동 백필/일회성만.
   workflow_dispatch: {}
 
 jobs:
