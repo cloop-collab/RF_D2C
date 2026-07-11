@@ -2,10 +2,11 @@ name: Kakao Moment to BigQuery Daily
 
 on:
   schedule:
-    # 한국시간(KST) 기준. 카페24/네이버와 같은 06시대. GitHub 누락 대비 중복(재시도).
-    - cron: "17 21 * * *"   # 06:17 KST
-    - cron: "42 21 * * *"   # 06:42 KST (누락 대비)
-    - cron: "17 23 * * *"   # 08:17 KST (누락 대비 재시도)
+    # 하루 4회(KST) — 06/12/18/00시. 정각 혼잡 회피 위해 :07분. (KST=UTC+9)
+    - cron: "7 21 * * *"   # 06:07 KST
+    - cron: "7 3 * * *"    # 12:07 KST
+    - cron: "7 9 * * *"    # 18:07 KST
+    - cron: "7 15 * * *"   # 00:07 KST
   workflow_dispatch:
     inputs:
       backfill_days:
