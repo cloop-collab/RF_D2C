@@ -21,3 +21,9 @@ jobs:
         run: python ga4/ga4_to_bigquery.py --mode d0
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+      # 거래(transactions) 당일 갱신도 여기에 통합: 이 잡(0 * * * *)은 안정적으로 매시간 발화하나,
+      # 별도 ga4_transactions_d0 잡은 GitHub 스케줄 스킵으로 4~9시간 간격으로만 돌아 지연됨.
+      - name: Refresh rf_ga4_transactions (오늘)
+        run: python ga4/ga4_transactions_to_bigquery.py --mode d0
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
