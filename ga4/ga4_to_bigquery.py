@@ -16,7 +16,9 @@ GA4 -> BigQuery 적재 (cloop-collab/RF_D2C · ga4 폴더)
 
 UTM 매핑:
   utm_source=session_source / utm_medium=session_medium / utm_campaign=session_campaign_name
-  utm_id=session_campaign_id / utm_term=session_manual_term / utm_content=session_manual_ad_content
+  utm_term=session_manual_term / utm_content=session_manual_ad_content
+  + session_manual_campaign_name(수동 utm_campaign·캠페인 매출 파리티) / first_user_source_medium(첫 접점 first-touch)
+  (2026-07: utm_id=session_campaign_id 드롭 → API 차원 9개 한도 내에서 위 2종 확보)
 """
 
 import argparse
@@ -50,17 +52,19 @@ PROPERTIES = {
     "499489594": "sprint",   # 스프린트몰
 }
 
-# GA4 차원 (UTM 전체 포함). date 제외 7개 + date = 8개 (API 최대 9개 이내)
+# GA4 차원. date 제외 8개 + date = 9개 (API 최대 9개). utm_id(sessionCampaignId) 드롭 → manual campaign·first-touch 확보.
 DIMENSIONS = [
     "date",
     "sessionSource",              # utm_source
     "sessionMedium",              # utm_medium
-    "sessionCampaignName",        # utm_campaign
-    "sessionCampaignId",          # utm_id
+    "sessionCampaignName",        # utm_campaign (자동 해석 포함)
+    "sessionManualCampaignName",  # 수동 utm_campaign (캠페인 매출 파리티)
     "sessionManualTerm",          # utm_term
     "sessionManualAdContent",     # utm_content
     "sessionDefaultChannelGroup",
+    "firstUserSourceMedium",      # 첫 접점(first-touch) source / medium
 ]
+# GA4 지표. 8개 + activeUsers·userEngagementDuration = 10개 (API 최대 10개).
 METRICS = [
     "sessions",
     "totalUsers",
@@ -70,6 +74,8 @@ METRICS = [
     "ecommercePurchases",
     "purchaseRevenue",
     "firstTimePurchasers",
+    "activeUsers",
+    "userEngagementDuration",
 ]
 
 DIM_COLS = {
@@ -77,10 +83,11 @@ DIM_COLS = {
     "sessionSource": "session_source",
     "sessionMedium": "session_medium",
     "sessionCampaignName": "session_campaign_name",
-    "sessionCampaignId": "session_campaign_id",
+    "sessionManualCampaignName": "session_manual_campaign_name",
     "sessionManualTerm": "session_manual_term",
     "sessionManualAdContent": "session_manual_ad_content",
     "sessionDefaultChannelGroup": "session_default_channel_group",
+    "firstUserSourceMedium": "first_user_source_medium",
 }
 METRIC_COLS = {
     "sessions": "sessions",
@@ -91,8 +98,10 @@ METRIC_COLS = {
     "ecommercePurchases": "ecommerce_purchases",
     "purchaseRevenue": "purchase_revenue",
     "firstTimePurchasers": "first_time_purchasers",
+    "activeUsers": "active_users",
+    "userEngagementDuration": "user_engagement_duration",
 }
-FLOAT_METRICS = {"purchase_revenue"}
+FLOAT_METRICS = {"purchase_revenue", "user_engagement_duration"}
 # =====================================================
 
 
@@ -103,11 +112,12 @@ def bq_schema():
         bigquery.SchemaField("date", "DATE"),
         bigquery.SchemaField("session_source", "STRING"),              # utm_source
         bigquery.SchemaField("session_medium", "STRING"),              # utm_medium
-        bigquery.SchemaField("session_campaign_name", "STRING"),       # utm_campaign
-        bigquery.SchemaField("session_campaign_id", "STRING"),         # utm_id
-        bigquery.SchemaField("session_manual_term", "STRING"),         # utm_term
-        bigquery.SchemaField("session_manual_ad_content", "STRING"),   # utm_content
+        bigquery.SchemaField("session_campaign_name", "STRING"),         # utm_campaign (자동 해석)
+        bigquery.SchemaField("session_manual_campaign_name", "STRING"),  # 수동 utm_campaign
+        bigquery.SchemaField("session_manual_term", "STRING"),           # utm_term
+        bigquery.SchemaField("session_manual_ad_content", "STRING"),     # utm_content
         bigquery.SchemaField("session_default_channel_group", "STRING"),
+        bigquery.SchemaField("first_user_source_medium", "STRING"),      # 첫 접점(first-touch)
     ]
     for _, col in METRIC_COLS.items():
         bq_type = "FLOAT" if col in FLOAT_METRICS else "INTEGER"
