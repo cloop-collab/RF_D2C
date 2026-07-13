@@ -1,0 +1,46 @@
+name: Cost to BigQuery Daily (mart.mart_cost_daily)
+
+# 원가·물류(택배비)를 mart.mart_cost_daily 에 적재. 통합리포트 자동입력(07:00)이 읽음.
+# ⚠ 07:00 KST 자동입력 전에 전일자까지 끝나야 함. cafe24_daily(06:00 KST) 완료 후·07:00 전 → 06:40 KST(=21:40 UTC).
+# 원가엔진 = cloop-dashboard api/report.js 이식(cost/cost_to_bigquery.js).
+
+on:
+  schedule:
+    - cron: "40 21 * * *"   # 06:40 KST (cafe24_daily 06:00 이후, report 07:00 이전)
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "과거 N일 1회 백필(어제까지). 비우면 일상 모드(최근 3일)."
+        required: false
+        default: ""
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_LOCATION: asia-northeast3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 의존성 설치
+        working-directory: cost
+        run: npm install --no-audit --no-fund
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: 적재 (원가/물류 → mart_cost_daily)
+        run: |
+          if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
+            node cost/cost_to_bigquery.js --backfill ${{ github.event.inputs.backfill_days }}
+          else
+            node cost/cost_to_bigquery.js
+          fi
+      - if: always()
+        run: rm -f sa_key.json
