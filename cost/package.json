@@ -1,0 +1,14 @@
+{
+  "name": "rf-d2c-cost",
+  "version": "1.0.0",
+  "private": true,
+  "description": "원가·물류(택배비) → mart.mart_cost_daily 적재. 원가엔진은 cloop-dashboard api/report.js 이식.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node cost_to_bigquery.js"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.9.0",
+    "googleapis": "^144.0.0"
+  }
+}
