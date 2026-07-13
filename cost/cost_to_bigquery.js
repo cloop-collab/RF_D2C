@@ -162,13 +162,11 @@ async function optionRows(bq, start, end) {
     "JSON_VALUE(raw_json,'$.option_value') AS optionName, " +
     "SUM(quantity) AS saleCount " +
     "FROM `" + SRC_TABLE + "` " +
-    "WHERE mall IN ('cloop','sprint') AND report_date BETWEEN @s AND @e " +
+    "WHERE mall IN ('cloop','sprint') AND report_date BETWEEN '" + start + "' AND '" + end + "' " +
     "AND IFNULL(JSON_VALUE(raw_json,'$.status_code'),'') NOT LIKE 'C%' " +
     "GROUP BY date, mallId, productName, optionName";
-  const [rows] = await bq.query({
-    query: sql, location: BQ_LOCATION,
-    params: { s: start, e: end }, types: { s: "DATE", e: "DATE" },
-  });
+  // 날짜는 자체 계산 YYYY-MM-DD(주입위험 없음). 명명 DATE 파라미터가 Node 클라이언트에서 0행 매칭되던 이슈 회피용 인라인.
+  const [rows] = await bq.query({ query: sql, location: BQ_LOCATION });
   return rows;
 }
 
@@ -193,13 +191,13 @@ function computeDaily(orows, cost) {
 async function loadRange(bq, start, end, rows) {
   const target = "`" + GCP_PROJECT + "." + DEST_DATASET + "." + DEST_TABLE + "`";
   let stmts = "BEGIN TRANSACTION;\n";
-  stmts += "DELETE FROM " + target + " WHERE report_date BETWEEN @s AND @e;\n";
+  stmts += "DELETE FROM " + target + " WHERE report_date BETWEEN '" + start + "' AND '" + end + "';\n";
   if (rows.length) {
     const vals = rows.map(r => "('" + r.report_date + "','" + r.mall + "'," + r.cogs + "," + r.ship + ")").join(",");
     stmts += "INSERT INTO " + target + " (report_date, mall, cogs, ship) VALUES " + vals + ";\n";
   }
   stmts += "COMMIT TRANSACTION;";
-  await bq.query({ query: stmts, location: BQ_LOCATION, params: { s: start, e: end }, types: { s: "DATE", e: "DATE" } });
+  await bq.query({ query: stmts, location: BQ_LOCATION });
 }
 
 async function main() {
