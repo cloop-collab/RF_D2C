@@ -60,7 +60,10 @@ import sys
 import json
 import time
 import base64
+import hashlib
+import hmac
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -620,6 +623,7 @@ ORDERS_SCHEMA = [
     bigquery.SchemaField("shop_no", "INT64"),
     bigquery.SchemaField("mall", "STRING"),
     bigquery.SchemaField("member_id", "STRING"),
+    bigquery.SchemaField("buyer_hash", "STRING"),   # 구매자 전화 HMAC 해시(원문 미저장)
     bigquery.SchemaField("order_status", "STRING"),
     bigquery.SchemaField("payment_amount", "FLOAT64"),
     bigquery.SchemaField("order_amount", "FLOAT64"),
@@ -731,6 +735,24 @@ def collect_orders_window(token_mgr, s, w_since, w_until):
     return o1 + o2, i1 + i2
 
 
+def _buyer_hash(o):
+    """구매자(우선)·수령인(폴백) 휴대폰 -> HMAC-SHA256 해시. 원문 전화는 저장하지 않음."""
+    def _norm(v):
+        if not v:
+            return None
+        dig = re.sub(r"\D", "", str(v))
+        return dig or None
+    b = o.get("buyer") or {}
+    ph = _norm(b.get("cellphone")) or _norm(b.get("phone"))
+    if not ph:
+        recs = o.get("receivers") or []
+        if recs and isinstance(recs[0], dict):
+            ph = _norm(recs[0].get("cellphone")) or _norm(recs[0].get("phone"))
+    if not ph:
+        return None
+    return hmac.new((CLIENT_SECRET or "cloop").encode(), ph.encode(), hashlib.sha256).hexdigest()
+
+
 def _paginate_orders(token_mgr, s, w_since, w_until):
     """단일 구간(주문수 < 상한) offset 페이지네이션 수집."""
     orders, items = [], []
@@ -738,7 +760,7 @@ def _paginate_orders(token_mgr, s, w_since, w_until):
     while True:
         params = {"shop_no": s["shop_no"], "start_date": w_since,
                   "end_date": w_until, "date_type": "order_date",
-                  "embed": "items", "limit": PAGE_LIMIT, "offset": offset}
+                  "embed": "items,buyer,receivers", "limit": PAGE_LIMIT, "offset": offset}
         try:
             data = admin_get("/orders", token_mgr, params=params)
         except RuntimeError as e:
@@ -749,10 +771,14 @@ def _paginate_orders(token_mgr, s, w_since, w_until):
         for o in chunk:
             d = _order_date(o) or w_until
             oid = _s(o, "order_id")
+            bh = _buyer_hash(o)
+            o.pop("buyer", None)
+            o.pop("receivers", None)  # PII 제거: raw_json엀 해시만 남김
             orders.append({
                 "report_date": d, "order_id": oid,
                 "shop_no": s["shop_no"], "mall": s["mall"],
                 "member_id": _s(o, "member_id"),
+                "buyer_hash": bh,
                 "order_status": _s(o, "order_status", "status"),
                 "payment_amount": _f(o, "payment_amount", "actual_payment_amount"),
                 "order_amount": _f(o, "order_price_amount", "order_amount"),
