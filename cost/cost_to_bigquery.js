@@ -87,6 +87,12 @@ function spFlavorCost(pn, fl, ctx) {
 function spBoxCost(pn, on) {
   const ctx = String(pn) + " " + String(on);
   if (/기프트박스/.test(ctx)) return { boxCost: SP_GIFT, cans: 1, pieces: 1 };
+  // 맛+수량 토큰 직접 추출 — order_items 옵션 형식 다양(개입수=.., 구성 선택=애플48+레몬24 / 맛 선택 ④=자몽 (24개입) / 이온 머스캣6).
+  //   키구조 파싱(ovPieces) '개입수=' 오염·괄호수량 미인식으로 스프린트 원가 붕괴(4.4%)하던 문제 해소. 대시보드 배포본(index.html) 이식.
+  { const toks = []; const reF = /(이온\s*)?(애플블라스트|애플|레몬부스트|레몬|오렌지임팩트|오렌지|자몽|사우어베리|시트러스버스트|시트러스|머스캣리치|머스캣|리치)\s*\(?\s*(\d+)/g; let mm;
+    while ((mm = reF.exec(String(on)))) { toks.push({ fl: (mm[1] ? "이온" : "") + mm[2], cnt: +mm[3] }); }
+    if (toks.length) { let bc = 0, cans = 0; toks.forEach(t => { bc += t.cnt * (spFlavorCost(pn, t.fl, ctx) || 0); cans += t.cnt; }); return { boxCost: bc, cans, pieces: toks.length }; }
+  }
   const par = ctx.match(/\(([^)]*[가-힣][^)]*)\)/);
   if (par && !/개입|원|%/.test(par[1])) {
     const flavs = par[1].split("/").map(s => s.trim()).filter(Boolean);
