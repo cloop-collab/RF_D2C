@@ -1,12 +1,17 @@
 name: Cost to BigQuery Daily (mart.mart_cost_daily)
 
 # 원가·물류(택배비)를 mart.mart_cost_daily 에 적재. 통합리포트 자동입력(07:00)이 읽음.
-# ⚠ 07:00 KST 자동입력 전에 전일자까지 끝나야 함. cafe24_daily(06:00 KST) 완료 후·07:00 전 → 06:40 KST(=21:40 UTC).
+# ⚠ 07:00 KST 자동입력 전에 전일자까지 끝나야 함.
+# 정상 경로: cafe24_daily(원본 적재) 성공 완료 직후 자동 실행(workflow_run 체이닝) → GitHub 스케줄 지연 무관.
+# 폴백: 06:40 KST(=21:40 UTC) cron (workflow_run 이벤트 누락 대비).
 # 원가엔진 = cloop-dashboard api/report.js 이식(cost/cost_to_bigquery.js).
 
 on:
+  workflow_run:
+    workflows: ["Cafe24 to BigQuery Daily"]   # cafe24_daily 성공 완료 후 자동 실행
+    types: [completed]
   schedule:
-    - cron: "40 21 * * *"   # 06:40 KST (cafe24_daily 06:00 이후, report 07:00 이전)
+    - cron: "40 21 * * *"   # 폴백: 06:40 KST
   workflow_dispatch:
     inputs:
       backfill_days:
@@ -16,6 +21,8 @@ on:
 
 jobs:
   load:
+    # workflow_run(cafe24_daily 완료)일 땐 성공했을 때만. 스케줄/수동은 항상 실행.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
